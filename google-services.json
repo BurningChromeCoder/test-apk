@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "830550601352",
+    "project_id": "puerta-c3a71",
+    "storage_bucket": "puerta-c3a71.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:830550601352:android:11418db7ac30773d4db93d",
+        "android_client_info": {
+          "package_name": "com.mipuerta.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBxOnEz1YAtlAYsQVHmLJJZ0L37H2FoeRE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
