@@ -1,0 +1,8 @@
+{
+  "name": "mipuerta-app",
+  "version": "1.0.0",
+  "description": "Sistema de puerta con videollamada",
+  "scripts": {
+    "build": "cap sync"
+  }
+}
