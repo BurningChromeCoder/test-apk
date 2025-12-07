@@ -3,88 +3,72 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tocando timbre...</title>
-    <script src='https://meet.jit.si/external_api.js'></script>
+    <title>Timbre</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            color: white; 
-            font-family: sans-serif; 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            justify-content: center; 
-            height: 100vh; 
-            margin: 0; 
-            overflow: hidden;
-        }
-        .card { 
-            background: rgba(255,255,255,0.15); 
-            padding: 40px; 
-            border-radius: 20px; 
-            text-align: center; 
-            backdrop-filter: blur(10px); 
-            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-        }
-        h1 { margin: 10px 0; }
-        .loader { font-size: 60px; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        body { background: #2c3e50; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; text-align: center; margin: 0; }
+        .timbre-btn { width: 150px; height: 150px; background: #e74c3c; border-radius: 50%; border: 8px solid #c0392b; cursor: pointer; font-size: 60px; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 20px rgba(0,0,0,0.3); transition: transform 0.1s; }
+        .timbre-btn:active { transform: scale(0.95); }
+        p { font-size: 18px; margin-top: 20px; max-width: 80%; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
-    <div class="card" id="card">
-        <div class="loader">🔔</div>
-        <h1>Llamando...</h1>
-        <p>Por favor espere, estamos avisando.</p>
+    <div id="pantalla1">
+        <div class="timbre-btn" onclick="tocarTimbre()">🔔</div>
+        <p>Toque para llamar</p>
     </div>
+
+    <div id="pantalla2" class="hidden">
+        <div class="timbre-btn" style="background:#f39c12; border-color:#d35400; animation: pulse 1s infinite;">🔊</div>
+        <p>Llamando... Espere por favor.</p>
+    </div>
+
+    <audio id="remoteAudio" autoplay></audio>
+
     <script>
-        // TU URL DE FUNCIÓN PARA NOTIFICAR
+        const ID_DESTINO = "puerta-admin-casa1"; // Debe coincidir con el del Index
         const URL_NOTIFICAR = 'https://us-central1-puerta-c3a71.cloudfunctions.net/notificarLlamada';
         
-        const sala = 'puerta-principal'; // Puedes cambiar esto si tienes varias puertas
+        let peer = null;
 
-        // 1. Avisar a los dueños
-        console.log("Enviando notificación...");
-        fetch(URL_NOTIFICAR, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sala: sala })
-        })
-        .then(r => r.json())
-        .then(data => console.log('Notificación enviada:', data))
-        .catch(e => console.error('Error al notificar:', e));
+        async function tocarTimbre() {
+            // 1. UI Feedback
+            document.getElementById('pantalla1').classList.add('hidden');
+            document.getElementById('pantalla2').classList.remove('hidden');
 
-        // 2. Conectar llamada (Audio activado, Video desactivado al inicio)
-        setTimeout(() => {
-            const api = new JitsiMeetExternalAPI("meet.jit.si", {
-                roomName: sala,
-                parentNode: document.body,
-                width: '100%',
-                height: '100%',
-                configOverrides: { 
-                    startWithVideoMuted: true, 
-                    prejoinPageEnabled: false,
-                    disableDeepLinking: true 
-                },
-                interfaceConfigOverrides: {
-                    TOOLBAR_BUTTONS: ['microphone', 'hangup'], // Solo audio y colgar para visitante
-                    FILM_STRIP_MAX_HEIGHT: 0,
-                    SHOW_JITSI_WATERMARK: false
-                },
-                userInfo: { displayName: 'Visitante' }
-            });
+            try {
+                // 2. Enviar Notificación Push (Alta Prioridad)
+                fetch(URL_NOTIFICAR, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sala: 'puerta-principal' })
+                });
 
-            api.addEventListener('videoConferenceJoined', () => {
-                document.getElementById('card').style.display = 'none';
-            });
-            
-            api.addEventListener('readyToClose', () => {
-                document.getElementById('card').style.display = 'flex';
-                document.querySelector('h1').innerText = "Llamada finalizada";
-                document.querySelector('.loader').innerText = "👋";
-            });
+                // 3. Iniciar Audio
+                const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // 4. Iniciar PeerJS
+                peer = new Peer(); // ID aleatorio para el visitante
+                
+                peer.on('open', (id) => {
+                    // 5. Hacer la llamada
+                    const call = peer.call(ID_DESTINO, localStream);
+                    
+                    // 6. Escuchar respuesta
+                    call.on('stream', (remoteStream) => {
+                        document.getElementById('remoteAudio').srcObject = remoteStream;
+                        document.querySelector('#pantalla2 p').innerText = "🔊 Conectado. Puede hablar.";
+                        document.querySelector('.timbre-btn').style.background = "#27ae60";
+                        document.querySelector('.timbre-btn').style.borderColor = "#2ecc71";
+                    });
+                });
 
-        }, 1000); // Pequeña pausa para asegurar carga
+            } catch (err) {
+                alert("Necesitamos permiso de micrófono para que te escuchen.");
+                location.reload();
+            }
+        }
     </script>
 </body>
 </html>
