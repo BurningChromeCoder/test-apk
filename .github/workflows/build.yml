@@ -24,14 +24,28 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
     
+    - name: Create package.json
+      run: |
+        echo '{
+          "name": "mipuerta",
+          "version": "1.0.0",
+          "description": "MiPuerta App"
+        }' > package.json
+    
     - name: Install Capacitor
       run: |
         npm install -g @capacitor/cli
         npm install @capacitor/core @capacitor/android
     
-    - name: Initialize Capacitor
+    - name: Verify www directory exists
       run: |
-        npx cap init MiPuerta com.mipuerta.app --web-dir=www
+        if [ ! -d "www" ]; then
+          mkdir -p www
+          echo "<!DOCTYPE html><html><head><title>MiPuerta</title></head><body><h1>Funciona!</h1></body></html>" > www/index.html
+        fi
+    
+    - name: Initialize Capacitor
+      run: npx cap init MiPuerta com.mipuerta.app --web-dir=www
     
     - name: Add Android platform
       run: npx cap add android
@@ -39,7 +53,7 @@ jobs:
     - name: Sync files
       run: npx cap sync
     
-    - name: Grant execute permission for gradlew
+    - name: Grant execute permission
       run: chmod +x android/gradlew
     
     - name: Build APK
