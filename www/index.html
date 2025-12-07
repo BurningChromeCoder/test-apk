@@ -3,171 +3,184 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Monitor Puerta V2</title>
+    <title>Monitor Puerta V3</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     
     <style>
         body { background: #000; color: #fff; font-family: monospace; margin: 0; display: flex; flex-direction: column; height: 100vh; }
         
-        /* LOGS EN PANTALLA (Para ver qué falla) */
+        /* CONSOLA DE LOGS (Para depurar) */
         #console-log {
-            background: #111;
-            color: #0f0;
-            padding: 10px;
-            height: 150px;
-            overflow-y: scroll;
-            border-bottom: 1px solid #333;
-            font-size: 10px;
-            text-align: left;
+            background: #111; color: #0f0; padding: 10px; height: 100px;
+            overflow-y: scroll; border-bottom: 1px solid #333; font-size: 10px; text-align: left;
         }
 
-        /* VIDEO */
-        #video-wrapper { flex-grow: 1; position: relative; display: flex; align-items: center; justify-content: center; background: #222; }
-        video { width: 100%; height: 100%; object-fit: cover; }
-        .status-big { position: absolute; font-size: 20px; color: #ffeb3b; text-align: center; }
+        /* CONTENEDOR DE VIDEO */
+        #video-wrapper { 
+            flex-grow: 1; position: relative; 
+            display: flex; align-items: center; justify-content: center; 
+            background: #222; overflow: hidden;
+        }
+
+        /* EL FIX DEL ICONO GIGANTE: Oculto por defecto */
+        video { 
+            width: 100%; height: 100%; object-fit: cover; 
+            display: none; 
+        }
         
-        /* BOTÓN RECARGAR (Por si se traba) */
-        .btn-reload { padding: 10px; background: #2196F3; color: white; border: none; font-size: 16px; cursor: pointer; }
+        /* Solo se muestra cuando tiene la clase 'active' */
+        video.active { display: block; }
+
+        .status-big { position: absolute; font-size: 20px; color: #ffeb3b; text-align: center; z-index: 10; }
+        
+        /* CONTROLES FLOTANTES */
+        .controls-layer {
+            position: absolute; bottom: 30px; left: 0; width: 100%;
+            display: flex; justify-content: center; gap: 20px; z-index: 20;
+        }
+
+        .btn { padding: 15px 30px; border: none; border-radius: 50px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.5); }
+        .btn-reload { background: #2196F3; color: white; }
+        .btn-hangup { background: #f44336; color: white; display: none; } /* Oculto hasta que haya llamada */
+
     </style>
 </head>
 <body>
 
     <div id="console-log">
-        > Iniciando Sistema V2...<br>
+        > Iniciando Sistema V3 (con STUN)...<br>
     </div>
 
     <div id="video-wrapper">
         <div id="status-text" class="status-big">🟡 Iniciando servicios...</div>
         <video id="remoteVideo" autoplay playsinline></video>
+        
+        <div class="controls-layer">
+            <button id="btn-hangup" class="btn btn-hangup" onclick="colgarLlamada()">📞 COLGAR</button>
+            <button class="btn btn-reload" onclick="window.location.reload()">🔄 REINICIAR</button>
+        </div>
     </div>
-
-    <button class="btn-reload" onclick="window.location.reload()">🔄 Reiniciar App</button>
 
     <script type="module">
         import { PushNotifications } from '@capacitor/push-notifications';
         
         // --- CONFIGURACIÓN ---
-        // CAMBIAMOS EL ID PARA EVITAR EL BLOQUEO
         const MY_ID = "puerta-admin-v2"; 
         const API_URL = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
+        let currentCall = null;
 
-        // --- FUNCIÓN DE LOG VISUAL ---
         function log(msg) {
             console.log(msg);
             const el = document.getElementById('console-log');
             el.innerHTML += `> ${msg}<br>`;
-            el.scrollTop = el.scrollHeight; // Auto scroll
+            el.scrollTop = el.scrollHeight;
         }
 
         function setStatus(msg) {
             document.getElementById('status-text').innerText = msg;
         }
 
+        // --- ACCIONES DE UI ---
+        window.colgarLlamada = function() {
+            log("🛑 Colgando llamada...");
+            if(currentCall) {
+                currentCall.close();
+            }
+            // Recargamos para limpiar cualquier error de video o memoria
+            setTimeout(() => window.location.reload(), 500);
+        }
+
         // --- INICIO ---
         window.addEventListener('load', async () => {
-            // Ejecutamos en paralelo para que uno no bloquee al otro
             iniciarFCM();
             iniciarPeer();
         });
 
-        // ------------------------------------------------
-        // 1. SISTEMA DE NOTIFICACIONES (TIMBRE)
-        // ------------------------------------------------
+        // 1. NOTIFICACIONES (Igual que antes)
         async function iniciarFCM() {
-            log("1. Iniciando Notificaciones...");
             try {
-                // Verificar permisos
                 let perm = await PushNotifications.checkPermissions();
                 if (perm.receive === 'prompt') perm = await PushNotifications.requestPermissions();
-                
-                if (perm.receive !== 'granted') {
-                    log("🔴 Permiso Notificaciones DENEGADO");
-                    return;
-                }
-
+                if (perm.receive !== 'granted') return;
                 await PushNotifications.register();
-                
-                // Listeners
-                PushNotifications.addListener('registration', async token => {
-                    log(`✅ Token FCM obtenido: ${token.value.substring(0,6)}...`);
-                    // Registrar en servidor
-                    registrarEnServidor(token.value);
-                });
-
-                PushNotifications.addListener('registrationError', err => {
-                    log("🔴 Error FCM: " + JSON.stringify(err));
-                });
-
-                PushNotifications.addListener('pushNotificationReceived', notif => {
-                    log("🔔 ¡NOTIFICACIÓN RECIBIDA! " + notif.title);
-                    alert("🔔 TIMBRE: " + notif.body);
-                });
-
-            } catch (e) {
-                log("🔴 Error Fatal FCM: " + e.message);
-            }
+                PushNotifications.addListener('registration', t => registrarEnServidor(t.value));
+                PushNotifications.addListener('pushNotificationReceived', n => alert("🔔 TIMBRE: " + n.body));
+            } catch (e) { log("Error FCM: " + e.message); }
         }
 
         async function registrarEnServidor(token) {
-            try {
-                const response = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token: token, sala: 'puerta-principal' })
-                });
-                if(response.ok) log("✅ Token guardado en Cloud Function");
-                else log("⚠️ Error guardando token: " + response.status);
-            } catch(e) {
-                log("⚠️ Error de red al guardar token: " + e.message);
-            }
+            fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: token, sala: 'puerta-principal' })
+            }).catch(e => log("Error API: " + e));
         }
 
-        // ------------------------------------------------
-        // 2. SISTEMA DE VIDEO (P2P)
-        // ------------------------------------------------
+        // 2. VIDEO P2P CON STUN
         async function iniciarPeer() {
-            log(`2. Iniciando Video P2P (ID: ${MY_ID})...`);
-            
+            log(`2. Iniciando Video P2P...`);
             try {
-                // Pedir permiso micrófono
+                // Pedimos permiso de micrófono
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
                 log("✅ Micrófono activo");
 
-                const peer = new Peer(MY_ID, { debug: 1 });
+                // Configuración con servidores STUN de Google
+                const peer = new Peer(MY_ID, {
+                    debug: 1,
+                    config: {
+                        iceServers: [
+                            { urls: 'stun:stun.l.google.com:19302' },
+                            { urls: 'stun:stun1.l.google.com:19302' },
+                            { urls: 'stun:stun2.l.google.com:19302' },
+                            { urls: 'stun:stun3.l.google.com:19302' },
+                            { urls: 'stun:stun4.l.google.com:19302' }
+                        ]
+                    }
+                });
 
                 peer.on('open', (id) => {
-                    log("✅ P2P CONECTADO. Esperando llamada...");
+                    log("✅ P2P LISTO. Esperando...");
                     setStatus("✅ LISTO: Esperando Timbre");
                     document.getElementById('status-text').style.color = "#4CAF50";
                 });
 
                 peer.on('error', (err) => {
                     log("🔴 Error P2P: " + err.type);
-                    setStatus("Error P2P: " + err.type);
+                    setStatus("Error: " + err.type);
                 });
 
                 peer.on('call', (call) => {
-                    log("📞 Llamada entrante de visitante...");
-                    setStatus("📞 CONTESTANDO...");
+                    log("📞 Llamada entrante...");
+                    setStatus("📞 CONECTANDO...");
+                    currentCall = call; 
                     
-                    // Contestar
+                    // Contestamos enviando nuestro audio
                     call.answer(stream);
 
                     call.on('stream', (remoteStream) => {
-                        log("🟢 Video remoto recibido");
+                        log("🟢 Video recibido");
+                        
+                        // 1. Ocultamos el texto de estado
                         document.getElementById('status-text').style.display = 'none';
-                        document.getElementById('remoteVideo').srcObject = remoteStream;
+                        
+                        // 2. Mostramos el video (esto quita el icono Play gigante)
+                        const videoEl = document.getElementById('remoteVideo');
+                        videoEl.srcObject = remoteStream;
+                        videoEl.classList.add('active'); 
+                        
+                        // 3. Mostramos el botón de colgar
+                        document.getElementById('btn-hangup').style.display = 'block';
                     });
                     
                     call.on('close', () => {
                         log("Llamada finalizada");
-                        window.location.reload(); // Recargar para limpiar
+                        window.location.reload();
                     });
                 });
 
             } catch (err) {
-                log("🔴 Error iniciando P2P: " + err.message);
-                setStatus("Fallo de inicio: " + err.message);
+                log("🔴 Error fatal: " + err.message);
+                setStatus("Fallo: " + err.message);
             }
         }
     </script>
