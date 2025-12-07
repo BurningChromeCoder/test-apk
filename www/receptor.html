@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MiPuerta Receptor</title>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
+    
+    <style>
+        body { background: #121212; color: #e0e0e0; font-family: sans-serif; padding: 20px; text-align: center; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        .btn { background: #bb86fc; color: #000; border: none; padding: 15px 30px; font-size: 16px; border-radius: 25px; cursor: pointer; margin-top: 20px; font-weight: bold; width: 100%; max-width: 300px; }
+        .status { margin: 10px auto; padding: 15px; background: #1f1f1f; border-radius: 8px; width: 100%; max-width: 300px; border: 1px solid #333; }
+        #jitsi { flex-grow: 1; margin-top: 20px; border-radius: 10px; overflow: hidden; background: #000; }
+        h1 { font-size: 24px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h1>🏠 Monitor de Puerta</h1>
+    <div id="status" class="status">Estado: Desconectado</div>
+    <button onclick="activar()" class="btn" id="btnActivar">🔔 Activar Notificaciones</button>
+    <div id="jitsi"></div>
+
+    <script src='https://meet.jit.si/external_api.js'></script>
+    <script>
+        // --- TU CONFIGURACIÓN EXACTA ---
+        const firebaseConfig = {
+          apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
+          authDomain: "puerta-c3a71.firebaseapp.com",
+          projectId: "puerta-c3a71",
+          storageBucket: "puerta-c3a71.firebasestorage.app",
+          messagingSenderId: "830550601352",
+          appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
+        };
+        // -------------------------------
+
+        firebase.initializeApp(firebaseConfig);
+        const messaging = firebase.messaging();
+        
+        // TU CLAVE VAPID
+        const VAPID_KEY = 'BEeZjzTb9wf_k3aKd4W8MZF8veDWFr5rD9uT9zTApUZcICZ0YBnTrlCZ1HU99pM4lZr0AqHkDX5UHXo_swNe3FE'; 
+
+        // TU URL DE FUNCIÓN
+        const URL_REGISTRO = 'https://us-central1-puerta-c3a71.cloudfunctions.net/registrarReceptor'; 
+
+        async function activar() {
+            try {
+                const permission = await Notification.requestPermission();
+                if (permission === 'granted') {
+                    document.getElementById('status').innerText = '⏳ Obteniendo token...';
+                    
+                    const token = await messaging.getToken({ vapidKey: VAPID_KEY });
+                    console.log("Token:", token);
+                    
+                    document.getElementById('status').innerText = '⏳ Registrando en servidor...';
+                    
+                    // Registrar en tu base de datos
+                    await fetch(URL_REGISTRO, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ token: token, sala: 'puerta-principal' })
+                    });
+                    
+                    document.getElementById('status').innerText = '✅ CONECTADO: Listo para recibir';
+                    document.getElementById('status').style.borderColor = '#4CAF50';
+                    document.getElementById('btnActivar').style.display = 'none';
+                } else {
+                    alert("Debes dar permiso de notificaciones para que suene el timbre.");
+                }
+            } catch (e) {
+                console.error(e);
+                document.getElementById('status').innerText = '❌ Error: ' + e.message;
+            }
+        }
+
+        // Escuchar notificaciones en primer plano
+        messaging.onMessage((payload) => {
+            console.log("Notificación recibida:", payload);
+            document.getElementById('status').innerText = '📞 LLAMADA ENTRANTE...';
+            const sala = payload.data.sala || 'puerta-principal';
+            iniciarLlamada(sala);
+        });
+
+        function iniciarLlamada(sala) {
+            document.getElementById('jitsi').innerHTML = '';
+            const api = new JitsiMeetExternalAPI("meet.jit.si", {
+                roomName: sala,
+                parentNode: document.querySelector('#jitsi'),
+                width: '100%',
+                height: '100%',
+                configOverrides: { 
+                    startWithVideoMuted: true, 
+                    prejoinPageEnabled: false 
+                },
+                interfaceConfigOverrides: {
+                    TOOLBAR_BUTTONS: ['microphone', 'hangup', 'camera']
+                },
+                userInfo: { displayName: 'Casa' }
+            });
+            
+            // Cuando cuelgas, limpiar
+            api.addEventListener('readyToClose', () => {
+                document.getElementById('jitsi').innerHTML = '';
+                document.getElementById('status').innerText = '✅ CONECTADO: Listo para recibir';
+            });
+        }
+    </script>
+</body>
+</html>
