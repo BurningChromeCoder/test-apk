@@ -13,15 +13,16 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
+// Manejo de mensajes cuando la web está en segundo plano (PC/Navegador móvil)
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Notificación recibida:', payload);
   
   const notificationTitle = payload.notification.title;
   const notificationOptions = {
     body: payload.notification.body,
-    icon: '/assets/icon.png', // Si tienes ícono
-    data: payload.data, // Aquí va la sala
-    requireInteraction: true,
+    icon: '/assets/icon.png',
+    data: payload.data,
+    requireInteraction: true, // Mantiene la notificación visible hasta que el usuario interactúa
     actions: [
         {action: 'open', title: '📞 Contestar'}
     ]
@@ -30,21 +31,24 @@ messaging.onBackgroundMessage((payload) => {
   self.registration.showNotification(notificationTitle, notificationOptions);
 });
 
+// Manejo del CLICK en la notificación
 self.addEventListener('notificationclick', function(event) {
     event.notification.close();
-    // Al hacer clic, abre la app en receptor.html
-    const urlToOpen = new URL('/receptor.html', self.location.origin).href;
+    
+    // Apuntamos a la raíz (index.html) donde está la lógica de contestar
+    const urlToOpen = new URL('/', self.location.origin).href;
     
     event.waitUntil(
         clients.matchAll({type: 'window', includeUncontrolled: true}).then(windowClients => {
-            // Si ya está abierta, enfocarla
+            // 1. Si la app ya está abierta, la ponemos en primer plano
             for (let i = 0; i < windowClients.length; i++) {
                 const client = windowClients[i];
-                if (client.url === urlToOpen && 'focus' in client) {
+                // Verificamos si la URL coincide con nuestra app
+                if (client.url.includes(self.location.origin) && 'focus' in client) {
                     return client.focus();
                 }
             }
-            // Si no, abrir nueva
+            // 2. Si no estaba abierta, la abrimos nueva
             if (clients.openWindow) {
                 return clients.openWindow(urlToOpen);
             }
