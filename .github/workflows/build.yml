@@ -24,20 +24,23 @@ jobs:
         distribution: 'temurin'
         java-version: '21'
     
-    # ELIMINADO EL PASO QUE SOBREESCRIBÍA PACKAGE.JSON
-    # Usaremos el package.json real del repositorio
-
+    # IMPORTANTE: Asegúrate de que tu package.json real esté en el repo
     - name: Install Dependencies
       run: npm install
-    
-    - name: Build Web Assets (Vite)
-      run: npm run build # Esto ejecuta 'vite build' y luego 'cap sync'
-    
-    # Capacitor ya se inicializa con npx cap sync, no hace falta init si ya tienes config
-    # Si es la primera vez en CI, aseguramos la plataforma:
+
+    # IMPORTANTE: Esto compila tu JS con Vite para que Android lo entienda
+    - name: Build Web Assets
+      run: npm run build
+      
+    # Crea la carpeta nativa de Android si no existe
     - name: Add Android platform
       run: npx cap add android || true 
-    
+
+    # AQUÍ ESTÁ EL PASO QUE PEDISTE:
+    # Se ejecuta DESPUÉS de crear la carpeta android, para que la ruta exista
+    - name: Create google-services.json
+      run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
+
     - name: Sync Capacitor
       run: npx cap sync
     
