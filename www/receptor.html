@@ -3,106 +3,128 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MiPuerta Receptor</title>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
+    <title>MiPuerta Receptor P2P</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     
     <style>
-        body { background: #121212; color: #e0e0e0; font-family: sans-serif; padding: 20px; text-align: center; margin: 0; display: flex; flex-direction: column; height: 100vh; }
-        .btn { background: #bb86fc; color: #000; border: none; padding: 15px 30px; font-size: 16px; border-radius: 25px; cursor: pointer; margin-top: 20px; font-weight: bold; width: 100%; max-width: 300px; }
-        .status { margin: 10px auto; padding: 15px; background: #1f1f1f; border-radius: 8px; width: 100%; max-width: 300px; border: 1px solid #333; }
-        #jitsi { flex-grow: 1; margin-top: 20px; border-radius: 10px; overflow: hidden; background: #000; }
-        h1 { font-size: 24px; margin-bottom: 10px; }
+        body { background: #000; color: #fff; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        /* Video ocupa toda la pantalla */
+        #video-container { position: relative; flex-grow: 1; display: flex; justify-content: center; align-items: center; background: #111; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* Controles flotantes */
+        .controls { position: absolute; bottom: 30px; left: 0; width: 100%; display: flex; justify-content: center; gap: 20px; z-index: 10; }
+        .btn { width: 60px; height: 60px; border-radius: 50%; border: none; font-size: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        .btn-hangup { background: #f44336; color: white; }
+        .btn-answer { background: #4caf50; color: white; }
+        
+        /* Estado */
+        .status-bar { padding: 10px; text-align: center; background: #222; font-size: 14px; }
+        .waiting { color: #ffeb3b; }
+        .connected { color: #4caf50; font-weight: bold; }
     </style>
 </head>
 <body>
-    <h1>🏠 Monitor de Puerta</h1>
-    <div id="status" class="status">Estado: Desconectado</div>
-    <button onclick="activar()" class="btn" id="btnActivar">🔔 Activar Notificaciones</button>
-    <div id="jitsi"></div>
 
-    <script src='https://meet.jit.si/external_api.js'></script>
+    <div id="status" class="status-bar waiting">Iniciando sistema P2P...</div>
+
+    <div id="video-container">
+        <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+
+    <div class="controls" id="controls" style="display:none;">
+        <button class="btn btn-hangup" onclick="colgar()">📞</button>
+    </div>
+
     <script>
-        // --- TU CONFIGURACIÓN EXACTA ---
-        const firebaseConfig = {
-          apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
-          authDomain: "puerta-c3a71.firebaseapp.com",
-          projectId: "puerta-c3a71",
-          storageBucket: "puerta-c3a71.firebasestorage.app",
-          messagingSenderId: "830550601352",
-          appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
-        };
-        // -------------------------------
-
-        firebase.initializeApp(firebaseConfig);
-        const messaging = firebase.messaging();
+        // --- CONFIGURACIÓN P2P ---
+        // ESTE ID DEBE SER EXACTAMENTE EL MISMO QUE EN 'visitante.html'
+        const MY_ID = "puerta-admin-casa1"; 
         
-        // TU CLAVE VAPID
-        const VAPID_KEY = 'BEeZjzTb9wf_k3aKd4W8MZF8veDWFr5rD9uT9zTApUZcICZ0YBnTrlCZ1HU99pM4lZr0AqHkDX5UHXo_swNe3FE'; 
+        let peer = null;
+        let currentCall = null;
+        let localStream = null;
 
-        // TU URL DE FUNCIÓN
-        const URL_REGISTRO = 'https://us-central1-puerta-c3a71.cloudfunctions.net/registrarReceptor'; 
-
-        async function activar() {
-            try {
-                const permission = await Notification.requestPermission();
-                if (permission === 'granted') {
-                    document.getElementById('status').innerText = '⏳ Obteniendo token...';
-                    
-                    const token = await messaging.getToken({ vapidKey: VAPID_KEY });
-                    console.log("Token:", token);
-                    
-                    document.getElementById('status').innerText = '⏳ Registrando en servidor...';
-                    
-                    // Registrar en tu base de datos
-                    await fetch(URL_REGISTRO, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ token: token, sala: 'puerta-principal' })
-                    });
-                    
-                    document.getElementById('status').innerText = '✅ CONECTADO: Listo para recibir';
-                    document.getElementById('status').style.borderColor = '#4CAF50';
-                    document.getElementById('btnActivar').style.display = 'none';
-                } else {
-                    alert("Debes dar permiso de notificaciones para que suene el timbre.");
-                }
-            } catch (e) {
-                console.error(e);
-                document.getElementById('status').innerText = '❌ Error: ' + e.message;
-            }
-        }
-
-        // Escuchar notificaciones en primer plano
-        messaging.onMessage((payload) => {
-            console.log("Notificación recibida:", payload);
-            document.getElementById('status').innerText = '📞 LLAMADA ENTRANTE...';
-            const sala = payload.data.sala || 'puerta-principal';
-            iniciarLlamada(sala);
+        // 1. Inicializar al cargar
+        window.addEventListener('load', async () => {
+            await iniciarPeer();
         });
 
-        function iniciarLlamada(sala) {
-            document.getElementById('jitsi').innerHTML = '';
-            const api = new JitsiMeetExternalAPI("meet.jit.si", {
-                roomName: sala,
-                parentNode: document.querySelector('#jitsi'),
-                width: '100%',
-                height: '100%',
-                configOverrides: { 
-                    startWithVideoMuted: true, 
-                    prejoinPageEnabled: false 
-                },
-                interfaceConfigOverrides: {
-                    TOOLBAR_BUTTONS: ['microphone', 'hangup', 'camera']
-                },
-                userInfo: { displayName: 'Casa' }
+        async function iniciarPeer() {
+            setStatus("⏳ Conectando a la red P2P...");
+
+            try {
+                // Obtenemos micrófono del celular para poder hablarle al visitante
+                // (Si quieres video también, cambia video: false a video: true)
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            } catch (err) {
+                console.error("No se pudo obtener micrófono", err);
+                setStatus("❌ Error: Falta permiso de micrófono");
+                return;
+            }
+
+            // Creamos la identidad del receptor
+            peer = new Peer(MY_ID, {
+                debug: 2
             });
-            
-            // Cuando cuelgas, limpiar
-            api.addEventListener('readyToClose', () => {
-                document.getElementById('jitsi').innerHTML = '';
-                document.getElementById('status').innerText = '✅ CONECTADO: Listo para recibir';
+
+            // A: Conexión exitosa con el servidor de señalización
+            peer.on('open', (id) => {
+                console.log('Mi ID es: ' + id);
+                setStatus("✅ LISTO: Esperando llamada...");
             });
+
+            // B: Alguien está llamando (El visitante tocó el timbre)
+            peer.on('call', (call) => {
+                console.log("📞 Llamada entrante de:", call.peer);
+                setStatus("🔔 ¡LLAMADA ENTRANTE!");
+                
+                // Contestamos automáticamente enviando nuestro audio
+                call.answer(localStream); 
+                currentCall = call;
+
+                // Cuando llega el video del visitante
+                call.on('stream', (remoteStream) => {
+                    console.log("Video recibido");
+                    const videoElem = document.getElementById('remoteVideo');
+                    videoElem.srcObject = remoteStream;
+                    setStatus("🟢 CONECTADO: Hablando con puerta");
+                    document.getElementById('controls').style.display = 'flex';
+                });
+
+                call.on('close', () => {
+                   resetLlamada();
+                });
+            });
+
+            // C: Manejo de errores
+            peer.on('error', (err) => {
+                console.error(err);
+                if (err.type === 'unavailable-id') {
+                    setStatus("⚠️ Error: Ya hay otra app abierta con este ID");
+                } else {
+                    setStatus("❌ Error de red: " + err.type);
+                }
+            });
+        }
+
+        function colgar() {
+            if (currentCall) {
+                currentCall.close();
+            }
+            resetLlamada();
+        }
+
+        function resetLlamada() {
+            document.getElementById('remoteVideo').srcObject = null;
+            document.getElementById('controls').style.display = 'none';
+            setStatus("✅ LISTO: Esperando llamada...");
+            currentCall = null;
+        }
+
+        function setStatus(msg) {
+            document.getElementById('status').innerText = msg;
         }
     </script>
 </body>
