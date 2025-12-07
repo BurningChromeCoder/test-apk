@@ -7,7 +7,7 @@
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     
     <style>
-        /* RESET & BASE */
+        /* --- ESTILOS MODERNOS --- */
         body { 
             background: #000; 
             color: #fff; 
@@ -19,110 +19,96 @@
             overflow: hidden;
         }
         
-        /* CONSOLA DE LOGS (Estilo Matrix/Hacker, más pequeña y discreta) */
+        /* CONSOLA DE LOGS (Más discreta) */
         #console-log {
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            background: rgba(0,0,0,0.7); 
+            background: rgba(0,0,0,0.8); 
             color: #0f0; 
             padding: 10px; 
-            height: 80px;
+            height: 60px;
             overflow-y: scroll; 
-            font-family: 'Courier New', monospace;
+            border-bottom: 1px solid #333; 
             font-size: 10px; 
+            font-family: monospace;
+            position: relative;
             z-index: 5;
-            pointer-events: none; /* Permite tocar el video debajo */
-            border-bottom: 1px solid #333;
         }
 
         /* CONTENEDOR DE VIDEO */
         #video-wrapper { 
-            width: 100%; 
-            height: 100%; 
+            flex-grow: 1; 
             position: relative; 
             display: flex; 
             align-items: center; 
             justify-content: center; 
             background: #121212; 
+            overflow: hidden;
         }
 
-        /* FIX CRÍTICO PARA EL ICONO DE PLAY EN ANDROID */
+        /* --- FIX ICONO PLAY GIGANTE --- */
         video { 
             width: 100%; 
             height: 100%; 
             object-fit: cover; 
-            display: none; /* Se muestra vía JS */
+            display: none; 
         }
-        
-        /* Esto oculta el botón nativo de Play gigante en WebView */
+        /* Esto oculta los controles nativos de Android WebView */
         video::-webkit-media-controls { display:none !important; }
         video::-webkit-media-controls-start-playback-button { display: none !important; -webkit-appearance: none; }
-
+        
         video.active { display: block; }
 
-        /* ESTADO GRANDE (Cuando no hay video) */
         .status-big { 
+            position: absolute; 
             font-size: 18px; 
-            color: #aaa; 
+            color: #ffeb3b; 
             text-align: center; 
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 15px;
+            z-index: 10;
+            background: rgba(0,0,0,0.5);
+            padding: 10px 20px;
+            border-radius: 20px;
         }
-        .loading-spinner {
-            width: 40px; height: 40px;
-            border: 4px solid rgba(255,255,255,0.1);
-            border-left-color: #3498db;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin { 100% { transform: rotate(360deg); } }
         
-        /* BARRA DE CONTROLES MODERNA (Glassmorphism) */
+        /* --- CONTROLES FLOTANTES MODERNOS (Glassmorphism) --- */
         .controls-layer {
             position: absolute; 
             bottom: 40px; 
             left: 50%;
             transform: translateX(-50%);
+            width: auto;
             display: flex; 
+            justify-content: center; 
             gap: 20px; 
             z-index: 20;
-            background: rgba(25, 25, 25, 0.85);
+            background: rgba(30, 30, 30, 0.8);
             backdrop-filter: blur(10px);
-            padding: 15px 25px;
+            padding: 15px 30px;
             border-radius: 40px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
             border: 1px solid rgba(255,255,255,0.1);
         }
 
         .btn { 
             width: 60px; 
             height: 60px; 
-            border-radius: 50%; 
             border: none; 
+            border-radius: 50%; 
             font-size: 24px; 
             cursor: pointer; 
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             color: white;
+            transition: transform 0.1s, background 0.2s;
         }
-
+        
         .btn:active { transform: scale(0.9); }
 
-        /* Colores de botones */
         .btn-reload { background: #34495e; }
-        .btn-mute { background: #f1c40f; color: #222; }
-        .btn-mute.muted { background: #e74c3c; color: white; position: relative;}
-        /* Tachado para el mute */
-        .btn-mute.muted::after {
-            content: ''; position: absolute; width: 60%; height: 2px; 
-            background: white; transform: rotate(45deg);
-        }
-
-        .btn-hangup { background: #e74c3c; display: none; } /* Oculto por defecto */
+        .btn-hangup { background: #e74c3c; display: none; } /* Rojo */
+        
+        /* Botón Mute */
+        .btn-mute { background: #f1c40f; color: #000; } /* Amarillo */
+        .btn-mute.muted { background: #d32f2f; color: #fff; } /* Rojo oscuro al mutear */
 
     </style>
 </head>
@@ -133,18 +119,13 @@
     </div>
 
     <div id="video-wrapper">
-        <div id="status-container" class="status-big">
-            <div class="loading-spinner"></div>
-            <div id="status-text">Iniciando servicios...</div>
-        </div>
-        
+        <div id="status-text" class="status-big">🟡 Iniciando servicios...</div>
         <video id="remoteVideo" autoplay playsinline webkit-playsinline></video>
         
         <div class="controls-layer">
             <button id="btn-mute" class="btn btn-mute" onclick="toggleMute()">🎤</button>
             
             <button id="btn-hangup" class="btn btn-hangup" onclick="colgarLlamada()">📞</button>
-            
             <button class="btn btn-reload" onclick="window.location.reload()">🔄</button>
         </div>
     </div>
@@ -156,9 +137,8 @@
         const MY_ID = "puerta-admin-v2"; 
         const API_URL = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
         
-        // Variables Globales
         let currentCall = null;
-        let localStream = null; // Guardamos el stream para poder mutearlo
+        let localStream = null; // VARIABLE GLOBAL PARA PODER MUTEAR
         let isMuted = false;
 
         function log(msg) {
@@ -168,42 +148,42 @@
             el.scrollTop = el.scrollHeight;
         }
 
-        function setStatus(msg, loading = true) {
+        function setStatus(msg) {
             document.getElementById('status-text').innerText = msg;
-            document.querySelector('.loading-spinner').style.display = loading ? 'block' : 'none';
         }
 
         // --- ACCIONES DE UI ---
-
-        // 1. Mute / Unmute
+        
+        // 1. Lógica de Mute (NUEVA)
         window.toggleMute = function() {
-            if (!localStream) {
-                log("⚠️ No hay micrófono activo aún.");
+            if(!localStream) {
+                log("⚠️ Aún no hay audio activo");
                 return;
             }
-            
             const audioTrack = localStream.getAudioTracks()[0];
             if (audioTrack) {
                 isMuted = !isMuted;
-                audioTrack.enabled = !isMuted; // enabled = true significa que se escucha
+                audioTrack.enabled = !isMuted; // enabled = true es micrófono abierto
                 
                 const btn = document.getElementById('btn-mute');
                 if (isMuted) {
                     btn.classList.add('muted');
-                    log("🔇 Micrófono Silenciado");
+                    btn.innerText = "🔇";
+                    log("🔇 Micrófono silenciado");
                 } else {
                     btn.classList.remove('muted');
-                    log("🎤 Micrófono Activo");
+                    btn.innerText = "🎤";
+                    log("🎤 Micrófono activo");
                 }
             }
         }
 
-        // 2. Colgar
         window.colgarLlamada = function() {
             log("🛑 Colgando llamada...");
             if(currentCall) {
                 currentCall.close();
             }
+            // Recargamos para limpiar cualquier error de video o memoria
             setTimeout(() => window.location.reload(), 500);
         }
 
@@ -213,7 +193,7 @@
             iniciarPeer();
         });
 
-        // NOTIFICACIONES
+        // 1. NOTIFICACIONES
         async function iniciarFCM() {
             try {
                 let perm = await PushNotifications.checkPermissions();
@@ -222,7 +202,7 @@
                 await PushNotifications.register();
                 PushNotifications.addListener('registration', t => registrarEnServidor(t.value));
                 PushNotifications.addListener('pushNotificationReceived', n => alert("🔔 TIMBRE: " + n.body));
-            } catch (e) { log("Info FCM: " + e.message); } // Degradación elegante si falla en dev
+            } catch (e) { log("Error FCM: " + e.message); }
         }
 
         async function registrarEnServidor(token) {
@@ -233,57 +213,60 @@
             }).catch(e => log("Error API: " + e));
         }
 
-        // VIDEO P2P
+        // 2. VIDEO P2P CON STUN (Mantenemos TU lista de servidores original)
         async function iniciarPeer() {
             log(`2. Iniciando Video P2P...`);
             try {
-                // Obtenemos micrófono (AUDIO TRUE, VIDEO FALSE)
+                // Pedimos permiso de micrófono y lo guardamos en la variable GLOBAL
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                log("✅ Micrófono capturado OK");
+                log("✅ Micrófono activo");
 
+                // Configuración con servidores STUN (Tu lista original que funciona bien)
                 const peer = new Peer(MY_ID, {
                     debug: 1,
                     config: {
                         iceServers: [
                             { urls: 'stun:stun.l.google.com:19302' },
-                            { urls: 'stun:stun1.l.google.com:19302' }
+                            { urls: 'stun:stun1.l.google.com:19302' },
+                            { urls: 'stun:stun2.l.google.com:19302' },
+                            { urls: 'stun:stun3.l.google.com:19302' },
+                            { urls: 'stun:stun4.l.google.com:19302' }
                         ]
                     }
                 });
 
                 peer.on('open', (id) => {
-                    log("✅ P2P ONLINE ID: " + id);
-                    setStatus("Esperando timbre...", false);
+                    log("✅ P2P LISTO. Esperando...");
+                    setStatus("✅ LISTO: Esperando Timbre");
                     document.getElementById('status-text').style.color = "#4CAF50";
                 });
 
                 peer.on('error', (err) => {
                     log("🔴 Error P2P: " + err.type);
-                    setStatus("Error: " + err.type, false);
+                    setStatus("Error: " + err.type);
                 });
 
                 peer.on('call', (call) => {
                     log("📞 Llamada entrante...");
-                    setStatus("📞 CONECTANDO...", true);
+                    setStatus("📞 CONECTANDO...");
                     currentCall = call; 
                     
-                    // Contestamos con nuestro audio (muteable)
+                    // Contestamos enviando nuestro audio GLOBAL (para poder mutearlo)
                     call.answer(localStream);
 
                     call.on('stream', (remoteStream) => {
                         log("🟢 Video recibido");
                         
-                        // UI Update
-                        document.getElementById('status-container').style.display = 'none';
-                        document.getElementById('btn-hangup').style.display = 'flex';
+                        // 1. Ocultamos el texto de estado
+                        document.getElementById('status-text').style.display = 'none';
                         
-                        // Video setup
+                        // 2. Mostramos el video y ACTIVAMOS EL CSS HACK para quitar el icono
                         const videoEl = document.getElementById('remoteVideo');
                         videoEl.srcObject = remoteStream;
                         videoEl.classList.add('active'); 
                         
-                        // Forzar play por si acaso
-                        videoEl.play().catch(e => log("Auto-play warning: " + e));
+                        // 3. Mostramos el botón de colgar (Flex para mantener alineación)
+                        document.getElementById('btn-hangup').style.display = 'flex';
                     });
                     
                     call.on('close', () => {
@@ -294,7 +277,7 @@
 
             } catch (err) {
                 log("🔴 Error fatal: " + err.message);
-                setStatus("Fallo Permisos/Red", false);
+                setStatus("Fallo: " + err.message);
             }
         }
     </script>
