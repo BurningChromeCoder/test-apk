@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tocando timbre...</title>
+    <script src='https://meet.jit.si/external_api.js'></script>
+    <style>
+        body { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+            font-family: sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100vh; 
+            margin: 0; 
+            overflow: hidden;
+        }
+        .card { 
+            background: rgba(255,255,255,0.15); 
+            padding: 40px; 
+            border-radius: 20px; 
+            text-align: center; 
+            backdrop-filter: blur(10px); 
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        }
+        h1 { margin: 10px 0; }
+        .loader { font-size: 60px; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+    </style>
+</head>
+<body>
+    <div class="card" id="card">
+        <div class="loader">🔔</div>
+        <h1>Llamando...</h1>
+        <p>Por favor espere, estamos avisando.</p>
+    </div>
+    <script>
+        // TU URL DE FUNCIÓN PARA NOTIFICAR
+        const URL_NOTIFICAR = 'https://us-central1-puerta-c3a71.cloudfunctions.net/notificarLlamada';
+        
+        const sala = 'puerta-principal'; // Puedes cambiar esto si tienes varias puertas
+
+        // 1. Avisar a los dueños
+        console.log("Enviando notificación...");
+        fetch(URL_NOTIFICAR, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sala: sala })
+        })
+        .then(r => r.json())
+        .then(data => console.log('Notificación enviada:', data))
+        .catch(e => console.error('Error al notificar:', e));
+
+        // 2. Conectar llamada (Audio activado, Video desactivado al inicio)
+        setTimeout(() => {
+            const api = new JitsiMeetExternalAPI("meet.jit.si", {
+                roomName: sala,
+                parentNode: document.body,
+                width: '100%',
+                height: '100%',
+                configOverrides: { 
+                    startWithVideoMuted: true, 
+                    prejoinPageEnabled: false,
+                    disableDeepLinking: true 
+                },
+                interfaceConfigOverrides: {
+                    TOOLBAR_BUTTONS: ['microphone', 'hangup'], // Solo audio y colgar para visitante
+                    FILM_STRIP_MAX_HEIGHT: 0,
+                    SHOW_JITSI_WATERMARK: false
+                },
+                userInfo: { displayName: 'Visitante' }
+            });
+
+            api.addEventListener('videoConferenceJoined', () => {
+                document.getElementById('card').style.display = 'none';
+            });
+            
+            api.addEventListener('readyToClose', () => {
+                document.getElementById('card').style.display = 'flex';
+                document.querySelector('h1').innerText = "Llamada finalizada";
+                document.querySelector('.loader').innerText = "👋";
+            });
+
+        }, 1000); // Pequeña pausa para asegurar carga
+    </script>
+</body>
+</html>
