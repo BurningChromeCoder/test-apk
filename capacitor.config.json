@@ -1,7 +1,7 @@
 {
   "appId": "com.mipuerta.app",
   "appName": "MiPuerta",
-  "webDir": "www",
+  "webDir": "dist", 
   "server": {
     "androidScheme": "https"
   }
