@@ -1,108 +1,69 @@
-name: Build APK v2
+name: Build APK
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
     
-    - uses: actions/setup-node@v4
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
       with:
         node-version: '20'
-        cache: 'npm'
     
-    - uses: actions/setup-java@v4
+    - name: Setup Java 21
+      uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '21'
     
-    - name: Verify Java version
-      run: java -version
-    
-    - name: Setup project
+    - name: Create package.json
       run: |
-        # Crear package.json
-        cat > package.json << 'EOF'
-        {
-          "name": "mipuerta-app",
-          "version": "1.0.0",
-          "description": "App de puerta"
-        }
-        EOF
-        
-        # Verificar o crear www/
-        mkdir -p www
-        if [ ! -f "www/index.html" ]; then
-          cat > www/index.html << 'EOF'
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>MiPuerta</title>
-        </head>
-        <body>
-            <h1>🚪 MiPuerta</h1>
-            <p>App compilada exitosamente</p>
-        </body>
-        </html>
-        EOF
-        fi
-        
-        # Mostrar estructura
-        echo "=== Estructura del proyecto ==="
-        ls -la
-        echo "=== Contenido de www/ ==="
-        ls -la www/
+        echo '{
+          "name": "mipuerta",
+          "version": "1.0.0"
+        }' > package.json
     
     - name: Install Capacitor
       run: |
         npm install -g @capacitor/cli
         npm install @capacitor/core @capacitor/android
     
-    - name: Initialize Capacitor
+    - name: Verify www directory
       run: |
-        npx cap init MiPuerta com.mipuerta.app --web-dir=www
-        echo "=== Capacitor inicializado ==="
-        cat capacitor.config.json
+        if [ ! -d "www" ]; then
+          mkdir -p www
+          echo '<!DOCTYPE html><html><head><title>MiPuerta</title></head><body><h1>Funciona!</h1></body></html>' > www/index.html
+        fi
+        ls -la www/
     
-    - name: Add Android
+    - name: Initialize Capacitor
+      run: npx cap init MiPuerta com.mipuerta.app --web-dir=www
+    
+    - name: Add Android platform
       run: npx cap add android
     
-    - name: Sync
+    - name: Sync files
       run: npx cap sync
+    
+    - name: Grant execute permission
+      run: chmod +x android/gradlew
     
     - name: Build APK
       run: |
         cd android
-        chmod +x gradlew
-        ./gradlew assembleDebug --no-daemon --stacktrace --info
+        ./gradlew assembleDebug --no-daemon --stacktrace
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: mipuerta-apk-${{ github.run_number }}
+        name: app-debug
         path: android/app/build/outputs/apk/debug/app-debug.apk
-        if-no-files-found: error
-```
-
----
-
-## **Verificación rápida:**
-
-Después de ejecutar el workflow, deberías ver:
-```
-✅ Setup Java 21
-✅ Install Capacitor
-✅ Initialize Capacitor
-✅ Add Android platform
-✅ Sync files
-✅ Build APK
-✅ Upload APK
-
-Artifacts: mipuerta-apk-XX
+        retention-days: 30
