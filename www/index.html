@@ -2,133 +2,168 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Intercomunicador</title>
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Monitor Puerta</title>
     <style>
-        body { background: #000; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; text-align: center;}
-        .btn { background: #2ecc71; border: none; padding: 25px; border-radius: 50%; width: 100px; height: 100px; margin-top: 30px; cursor: pointer; animation: pulse 2s infinite; display: none; font-size: 40px;}
-        .status { font-size: 18px; margin-bottom: 20px; color: #aaa; border: 1px solid #333; padding: 10px; border-radius: 10px; width: 100%;}
-        .debug { color: yellow; font-size: 12px; margin-top: 20px; font-family: monospace; }
-        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7); } 70% { box-shadow: 0 0 0 20px rgba(46, 204, 113, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); } }
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            text-align: center;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .ok { color: #4caf50; border: 1px solid #4caf50; }
+        .error { color: #f44336; border: 1px solid #f44336; }
+        .loading { color: #ffeb3b; }
+        
+        button {
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 5px;
+            margin-top: 20px;
+            cursor: pointer;
+        }
+        #log {
+            margin-top: 30px;
+            font-family: monospace;
+            font-size: 10px;
+            color: #aaa;
+            text-align: left;
+            width: 90%;
+            height: 100px;
+            overflow-y: scroll;
+            border-top: 1px solid #333;
+        }
     </style>
 </head>
 <body>
-    <h3>🏠 Monitor Puerta</h3>
-    <div id="status" class="status">🟡 Iniciando sistema...</div>
-    <div id="debug" class="debug">Log de eventos...</div>
-    <button id="btnAction" class="btn" onclick="contestar()">📞</button>
-    <audio id="remoteAudio" autoplay></audio>
 
-    <script>
-        // === 1. CONFIGURACIÓN ===
-        const MI_ID_FIJO = "puerta-admin-casa1"; 
-        const logDiv = document.getElementById('debug');
-        
+    <img src="assets/icon.png" width="80" alt="Logo" style="margin-bottom:20px;">
+    <h2>Monitor Puerta</h2>
+    
+    <div id="status-box" class="status loading">
+        🟡 Iniciando sistema...
+    </div>
+
+    <button onclick="window.location.reload()">Recargar App</button>
+
+    <div id="log">Logs del sistema...<br></div>
+
+    <script type="module">
+        // Importamos la librería nativa. Esto evita el error "Notification is not defined"
+        import { PushNotifications } from '@capacitor/push-notifications';
+        import { Toast } from '@capacitor/toast';
+
+        // URL DE TU CLOUD FUNCTION (Sacada de tus logs)
+        const API_URL = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
+
+        // Función de ayuda para logs en pantalla (útil en el celular)
         function log(msg) {
             console.log(msg);
-            logDiv.innerHTML = msg + "<br>" + logDiv.innerHTML;
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML += `> ${msg}<br>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
         }
 
-        const firebaseConfig = {
-          apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
-          authDomain: "puerta-c3a71.firebaseapp.com",
-          projectId: "puerta-c3a71",
-          storageBucket: "puerta-c3a71.firebasestorage.app",
-          messagingSenderId: "830550601352",
-          appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
-        };
-        
-        firebase.initializeApp(firebaseConfig);
-        const messaging = firebase.messaging();
+        function setStatus(msg, type) {
+            const el = document.getElementById('status-box');
+            el.className = `status ${type}`;
+            el.innerText = msg;
+        }
 
-        // === 2. REGISTRO DE NOTIFICACIONES (INMEDIATO) ===
-        async function iniciarNotificaciones() {
-            log("🟡 Solicitando permiso notificaciones...");
+        const iniciarSistema = async () => {
             try {
-                const permission = await Notification.requestPermission();
-                if (permission !== 'granted') {
-                    log("❌ PERMISO DENEGADO. No sonará.");
-                    alert("¡Debes dar permiso de notificaciones para que suene!");
+                log("Verificando permisos...");
+
+                // 1. Verificar y pedir permisos
+                let permStatus = await PushNotifications.checkPermissions();
+
+                if (permStatus.receive === 'prompt') {
+                    permStatus = await PushNotifications.requestPermissions();
+                }
+
+                if (permStatus.receive !== 'granted') {
+                    setStatus("🔴 Permiso de notificación denegado", "error");
                     return;
                 }
 
-                log("🟡 Obteniendo token FCM...");
-                const token = await messaging.getToken({ vapidKey: 'BEeZjzTb9wf_k3aKd4W8MZF8veDWFr5rD9uT9zTApUZcICZ0YBnTrlCZ1HU99pM4lZr0AqHkDX5UHXo_swNe3FE' });
+                // 2. Registrar listeners (Escuchadores)
+                await addListeners();
+
+                // 3. Registrar el dispositivo en FCM (Google)
+                await PushNotifications.register();
                 
-                if(token) {
-                    log("✅ Token obtenido. Registrando en servidor...");
-                    // Registrar en tu Cloud Function
-                    const resp = await fetch('https://us-central1-puerta-c3a71.cloudfunctions.net/registrarReceptor', {
+                setStatus("🟢 Sistema Activo. Esperando Token...", "loading");
+
+            } catch (e) {
+                log("ERROR CRÍTICO: " + JSON.stringify(e));
+                setStatus("🔴 Error iniciando: " + e.message, "error");
+            }
+        };
+
+        const addListeners = async () => {
+            // A: Cuando Google nos da el Token
+            await PushNotifications.addListener('registration', async token => {
+                log('Token recibido: ' + token.value.substring(0, 10) + '...');
+                
+                // ENVIAR TOKEN A TU SERVIDOR (Cloud Function)
+                try {
+                    const response = await fetch(API_URL, {
                         method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ token: token, sala: 'puerta-principal' })
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: token.value })
                     });
                     
-                    if(resp.ok) {
-                        log("✅ SISTEMA DE ALARMA LISTO.");
-                        document.getElementById('status').innerText = "🟢 Esperando timbre...";
-                        document.getElementById('status').style.borderColor = "green";
+                    if (response.ok) {
+                        setStatus("✅ Conectado y Listo para recibir", "ok");
+                        log("Token guardado en servidor correctamente.");
+                        await Toast.show({ text: 'Sistema Conectado Correctamente' });
                     } else {
-                        log("❌ Error servidor: " + resp.status);
+                        throw new Error("Servidor respondió: " + response.status);
                     }
-                } else {
-                    log("❌ No se pudo obtener token.");
+                } catch (err) {
+                    log("Error enviando token al servidor: " + err.message);
+                    setStatus("⚠️ Token local ok, pero error de red", "error");
                 }
-            } catch(e) {
-                log("❌ Error fatal notificaciones: " + e.message);
-                alert("Error: " + e.message);
-            }
-        }
+            });
 
-        // Iniciar registro YA MISMO
-        iniciarNotificaciones();
+            // B: Error al registrarse
+            await PushNotifications.addListener('registrationError', err => {
+                log('Error de registro FCM: ' + JSON.stringify(err));
+                setStatus("🔴 Falló conexión con Google", "error");
+            });
 
-        // Escuchar mensajes en primer plano
-        messaging.onMessage((payload) => {
-            log("🔔 ¡NOTIFICACIÓN RECIBIDA EN FOREGROUND!");
-            document.getElementById('status').innerText = "🔔 ¡TIMBRE SONANDO!";
-            document.getElementById('btnAction').style.display = 'block';
-            navigator.vibrate([500, 200, 500]); // Vibrar si está abierta
-        });
+            // C: Cuando llega una notificación con la app abierta
+            await PushNotifications.addListener('pushNotificationReceived', notification => {
+                log('¡TIMBRE! Notificación recibida: ' + notification.title);
+                setStatus("🔔 ¡ALGUIEN EN LA PUERTA!", "ok");
+                alert("🔔 " + notification.title + "\n" + notification.body);
+            });
 
-        // === 3. PEERJS (AUDIO) ===
-        const peer = new Peer(MI_ID_FIJO);
-        let currentCall = null;
+            // D: Cuando tocas la notificación
+            await PushNotifications.addListener('pushNotificationActionPerformed', notification => {
+                log('Usuario tocó la notificación');
+                window.location.href = 'receptor.html'; // O lo que quieras hacer
+            });
+        };
 
-        peer.on('open', (id) => {
-            log("✅ Conexión Audio P2P Lista. ID: " + id);
-        });
+        // Arrancar todo
+        iniciarSistema();
 
-        peer.on('error', (err) => {
-            log("❌ Error Audio P2P: " + err.type);
-        });
-
-        peer.on('call', (call) => {
-            log("📞 Llamada entrante de audio...");
-            currentCall = call;
-            document.getElementById('status').innerText = "🔔 ¡TIMBRE SONANDO!";
-            document.getElementById('btnAction').style.display = 'block';
-        });
-
-        async function contestar() {
-            if(!currentCall) return;
-            try {
-                const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                currentCall.answer(localStream);
-                currentCall.on('stream', (remoteStream) => {
-                    document.getElementById('remoteAudio').srcObject = remoteStream;
-                    log("🔊 AUDIO CONECTADO");
-                    document.getElementById('status').innerText = "🔊 HABLANDO";
-                    document.getElementById('btnAction').style.display = 'none';
-                });
-            } catch (err) {
-                alert("Error micrófono: " + err);
-            }
-        }
     </script>
 </body>
 </html>
