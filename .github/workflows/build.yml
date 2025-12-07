@@ -24,33 +24,21 @@ jobs:
         distribution: 'temurin'
         java-version: '21'
     
-    - name: Create package.json
-      run: |
-        echo '{
-          "name": "mipuerta",
-          "version": "1.0.0"
-        }' > package.json
+    # ELIMINADO EL PASO QUE SOBREESCRIBÍA PACKAGE.JSON
+    # Usaremos el package.json real del repositorio
+
+    - name: Install Dependencies
+      run: npm install
     
-    - name: Install Capacitor
-      run: |
-        npm install -g @capacitor/cli
-        npm install @capacitor/core @capacitor/android
+    - name: Build Web Assets (Vite)
+      run: npm run build # Esto ejecuta 'vite build' y luego 'cap sync'
     
-    - name: Verify www directory
-      run: |
-        if [ ! -d "www" ]; then
-          mkdir -p www
-          echo '<!DOCTYPE html><html><head><title>MiPuerta</title></head><body><h1>Funciona!</h1></body></html>' > www/index.html
-        fi
-        ls -la www/
-    
-    - name: Initialize Capacitor
-      run: npx cap init MiPuerta com.mipuerta.app --web-dir=www
-    
+    # Capacitor ya se inicializa con npx cap sync, no hace falta init si ya tienes config
+    # Si es la primera vez en CI, aseguramos la plataforma:
     - name: Add Android platform
-      run: npx cap add android
+      run: npx cap add android || true 
     
-    - name: Sync files
+    - name: Sync Capacitor
       run: npx cap sync
     
     - name: Grant execute permission
