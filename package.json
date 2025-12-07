@@ -2,18 +2,21 @@
   "name": "mipuerta-app",
   "version": "1.0.0",
   "description": "Sistema de puerta con videollamada",
+  "type": "module",
   "scripts": {
-    "build": "npm run build-web && npx cap sync",
-    "build-web": "echo 'No hay bundler, usando archivos crudos en www...'",
-    "start": "npx cap open android"
+    "dev": "vite",
+    "build": "vite build && npx cap sync",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@capacitor/core": "^6.0.0",
     "@capacitor/android": "^6.0.0",
     "@capacitor/push-notifications": "^6.0.0",
-    "@capacitor/toast": "^6.0.0"
+    "@capacitor/toast": "^6.0.0",
+    "firebase": "^10.7.1"
   },
   "devDependencies": {
-    "@capacitor/cli": "^6.0.0"
+    "@capacitor/cli": "^6.0.0",
+    "vite": "^5.0.0"
   }
 }
