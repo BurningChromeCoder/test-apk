@@ -1,29 +1,117 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MiPuerta</title>
+    <title>Intercomunicador</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
+
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            font-family: Arial, sans-serif;
-            text-align: center;
-        }
-        h1 { font-size: 48px; }
+        body { background: #000; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .btn { background: #2ecc71; border: none; padding: 25px; border-radius: 50%; width: 100px; height: 100px; margin-top: 50px; cursor: pointer; animation: pulse 2s infinite; display: none; }
+        .btn-hangup { background: #e74c3c; animation: none; }
+        .status { font-size: 20px; text-align: center; margin-bottom: 20px; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7); } 70% { box-shadow: 0 0 0 20px rgba(46, 204, 113, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); } }
     </style>
 </head>
 <body>
-    <div>
-        <h1>🚪 MiPuerta</h1>
-        <p>App funcionando correctamente</p>
-    </div>
+    <div id="status" class="status">🟢 Sistema Listo<br>Esperando timbre...</div>
+    <button id="btnAction" class="btn" onclick="contestar()">📞</button>
+    
+    <audio id="remoteAudio" autoplay></audio>
+
+    <script>
+        // 1. CONFIGURACIÓN
+        const MI_ID_FIJO = "puerta-admin-casa1"; // ID ÚNICO DEL RECEPTOR
+        let localStream = null;
+        let currentCall = null;
+
+        // 2. FIREBASE CONFIG (Tu configuración real)
+        const firebaseConfig = {
+          apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
+          authDomain: "puerta-c3a71.firebaseapp.com",
+          projectId: "puerta-c3a71",
+          storageBucket: "puerta-c3a71.firebasestorage.app",
+          messagingSenderId: "830550601352",
+          appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const messaging = firebase.messaging();
+
+        // 3. INICIALIZAR PEERJS (Conexión P2P)
+        const peer = new Peer(MI_ID_FIJO);
+
+        peer.on('open', (id) => {
+            console.log('Mi ID es: ' + id);
+            document.getElementById('status').innerText = "🟢 Sistema Listo\nEsperando timbre...";
+            registrarToken(); // Registra el token FCM
+        });
+
+        // 4. AL RECIBIR LLAMADA (Cuando el visitante llama)
+        peer.on('call', (call) => {
+            document.getElementById('status').innerText = "🔔 ¡TIMBRE SONANDO!";
+            document.getElementById('btnAction').style.display = 'block';
+            document.getElementById('btnAction').innerText = "📞";
+            
+            // Guardamos la llamada para contestarla al tocar el botón
+            currentCall = call;
+        });
+
+        // 5. CONTESTAR LLAMADA
+        async function contestar() {
+            if(!currentCall) return;
+
+            try {
+                // Pedir micrófono
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Responder a la llamada con nuestro audio
+                currentCall.answer(localStream); 
+                
+                // Escuchar el audio del visitante
+                currentCall.on('stream', (remoteStream) => {
+                    document.getElementById('remoteAudio').srcObject = remoteStream;
+                    document.getElementById('status').innerText = "🔊 HABLANDO CON PUERTA";
+                    
+                    // Cambiar botón a colgar
+                    const btn = document.getElementById('btnAction');
+                    btn.classList.add('btn-hangup');
+                    btn.innerText = "❌";
+                    btn.onclick = colgar;
+                });
+
+            } catch (err) {
+                alert("Error micrófono: " + err);
+            }
+        }
+
+        function colgar() {
+            if(currentCall) currentCall.close();
+            if(localStream) localStream.getTracks().forEach(track => track.stop());
+            location.reload(); // Recargar para limpiar
+        }
+
+        // 6. REGISTRO DE NOTIFICACIONES (Igual que antes pero simplificado)
+        async function registrarToken() {
+            try {
+                // Importante: VAPID Key
+                const token = await messaging.getToken({ vapidKey: 'BEeZjzTb9wf_k3aKd4W8MZF8veDWFr5rD9uT9zTApUZcICZ0YBnTrlCZ1HU99pM4lZr0AqHkDX5UHXo_swNe3FE' });
+                // Enviar a tu Cloud Function
+                await fetch('https://us-central1-puerta-c3a71.cloudfunctions.net/registrarReceptor', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ token: token, sala: 'puerta-principal' })
+                });
+            } catch(e) { console.error("Error token", e); }
+        }
+
+        // Si se abre desde notificación, manejar aquí
+        messaging.onMessage((payload) => {
+            // La llamada entrará por PeerJS, esto es solo visual
+            document.getElementById('status').innerText = "🔔 TIMBRE ACTIVO";
+        });
+    </script>
 </body>
 </html>
