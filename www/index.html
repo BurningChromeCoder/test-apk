@@ -149,7 +149,7 @@
         let incomingCallRequest = null;
         let audioContext = null;
         let analyser = null;
-        let ringtoneOscillator = null; // Tono generado por código
+        let ringtoneOscillator = null; 
         let callTimeout = null;
         let isMuted = false;
         let reconnectInterval = null;
@@ -157,7 +157,7 @@
         // --- 1. INICIO Y ONBOARDING ---
         window.iniciarApp = async function() {
             try {
-                // AudioContext para Visualizador y Ringtone (necesita interacción usuario)
+                // AudioContext para Visualizador y Ringtone
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
                 // Pedir micrófono
@@ -190,7 +190,7 @@
 
         function iniciarPeer() {
             log("Iniciando P2P...");
-            if (peer) peer.destroy();
+            if (peer) peer.destroy(); // Asegurar limpieza previa
 
             peer = new Peer(MY_ID, {
                 debug: 1,
@@ -209,18 +209,25 @@
                 if (reconnectInterval) clearInterval(reconnectInterval);
             });
 
+            // --- SOLUCIÓN 3: MANEJO INTELIGENTE DE ERRORES ---
             peer.on('error', (err) => {
-                log("Error P2P: " + err.type);
+                log("🔴 Error P2P: " + err.type);
                 updateNetworkStatus('offline');
                 
-                // Lógica de Reconexión
-                if (err.type === 'network' || err.type === 'disconnected') {
+                // CASO A: ID DUPLICADO (Tu error actual)
+                if (err.type === 'unavailable-id') {
+                    setStatus("⚠️ ID en uso por otra pestaña");
+                    alert("⚠️ ERROR: ID DUPLICADO\n\nYa tienes la app abierta en otro lugar.\nCierra todas las pestañas y espera 1 minuto.");
+                }
+                
+                // CASO B: PROBLEMAS DE RED (Reconectar)
+                else if (err.type === 'network' || err.type === 'disconnected' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') {
                     attemptReconnect();
                 }
             });
 
             peer.on('disconnected', () => {
-                log("Desconectado del servidor de señalización");
+                log("Desconectado del servidor");
                 updateNetworkStatus('offline');
                 attemptReconnect();
             });
@@ -243,21 +250,16 @@
             }, 5000);
         }
 
-        // --- 3. FLUJO DE LLAMADA (RINGTONE, TIMEOUT) ---
-        
+        // --- 3. FLUJO DE LLAMADA ---
         function manejarLlamadaEntrante(call) {
             incomingCallRequest = call;
-            
-            // UI
             setStatus("🔔 ALGUIEN TOCA EL TIMBRE");
             document.getElementById('avatar').innerText = "🔔";
             document.getElementById('controls-incoming').classList.remove('hidden');
             
-            // FEEDBACK (Ringtone + Vibración)
             startRinging();
-            if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 1000]); // Patrón vibración
+            if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 1000]);
             
-            // TIMEOUT (30 seg)
             if (callTimeout) clearTimeout(callTimeout);
             callTimeout = setTimeout(() => {
                 log("⏰ Timeout de llamada");
@@ -267,34 +269,27 @@
 
         window.contestarLlamada = function() {
             if (!incomingCallRequest) return;
-            
             stopRinging();
             if (callTimeout) clearTimeout(callTimeout);
             
-            // UI Transition
             document.getElementById('controls-incoming').classList.add('hidden');
             document.getElementById('controls-active').classList.remove('hidden');
-            document.getElementById('btn-mute').style.display = 'flex'; // Mostrar Mute
+            document.getElementById('btn-mute').style.display = 'flex'; 
             setStatus("🟢 CONECTADO");
             document.getElementById('avatar').innerText = "🔊";
             
-            // Lógica P2P
             currentCall = incomingCallRequest;
             currentCall.answer(localStream);
             
             currentCall.on('stream', (remoteStream) => {
-                // Audio
                 const audioEl = document.getElementById('remoteAudio');
                 audioEl.srcObject = remoteStream;
                 audioEl.play().catch(e => console.log(e));
-                
-                // Visualizador
                 conectarVisualizador(remoteStream);
             });
             
             currentCall.on('close', () => resetState());
             
-            // Monitoreo básico de calidad ICE
             currentCall.peerConnection.oniceconnectionstatechange = () => {
                 const state = currentCall.peerConnection.iceConnectionState;
                 if(state === 'disconnected' || state === 'failed') updateNetworkStatus('unstable');
@@ -313,16 +308,14 @@
             resetState();
         };
 
-        // "NO RELOAD" - Función para reiniciar estado sin recargar página
         function resetState() {
-            log("Resetting state...");
+            log("Estado reiniciado");
             stopRinging();
             if (callTimeout) clearTimeout(callTimeout);
             
             currentCall = null;
             incomingCallRequest = null;
             
-            // UI Reset
             document.getElementById('controls-incoming').classList.add('hidden');
             document.getElementById('controls-active').classList.add('hidden');
             document.getElementById('btn-mute').style.display = 'none';
@@ -333,32 +326,22 @@
             updateNetworkStatus('online');
         }
 
-        // --- 4. EXTRAS (RINGTONE, MUTE, VISUALIZADOR) ---
-
-        // Generador de Tono (Sintetizador) - No requiere archivo mp3
+        // --- 4. EXTRAS ---
         function startRinging() {
             if (!audioContext) return;
-            // Oscilador para sonido tipo "Teléfono antiguo digital"
             ringtoneOscillator = audioContext.createOscillator();
             const gainNode = audioContext.createGain();
-            
             ringtoneOscillator.type = 'square';
             ringtoneOscillator.frequency.setValueAtTime(800, audioContext.currentTime);
             ringtoneOscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.1);
             
-            // LFO para efecto de repetición (Ringing)
             const lfo = audioContext.createOscillator();
             lfo.type = 'square';
-            lfo.frequency.value = 4; // 4 veces por segundo
-            const lfoGain = audioContext.createGain();
-            lfoGain.gain.value = 500;
+            lfo.frequency.value = 4;
             
             ringtoneOscillator.connect(gainNode);
             gainNode.connect(audioContext.destination);
-            
-            // Volumen
             gainNode.gain.value = 0.1;
-            
             ringtoneOscillator.start();
         }
 
@@ -367,7 +350,7 @@
                 try { ringtoneOscillator.stop(); } catch(e){}
                 ringtoneOscillator = null;
             }
-            if (navigator.vibrate) navigator.vibrate(0); // Detener vibración
+            if (navigator.vibrate) navigator.vibrate(0);
         }
 
         window.toggleMute = function() {
@@ -377,21 +360,13 @@
             track.enabled = !isMuted;
             
             const btn = document.getElementById('btn-mute');
-            if (isMuted) {
-                btn.classList.add('muted');
-                log("Muted");
-            } else {
-                btn.classList.remove('muted');
-                log("Unmuted");
-            }
+            if (isMuted) btn.classList.add('muted');
+            else btn.classList.remove('muted');
         };
 
-        // Visualizador Web Audio API
         function iniciarVisualizador() {
             const canvas = document.getElementById('wave-visualizer');
             const ctx = canvas.getContext('2d');
-            
-            // Ajustar tamaño real
             canvas.width = window.innerWidth;
             canvas.height = 300;
             
@@ -403,7 +378,7 @@
                 const dataArray = new Uint8Array(bufferLength);
                 analyser.getByteTimeDomainData(dataArray);
 
-                ctx.fillStyle = 'rgba(17, 17, 17, 0.2)'; // Estela
+                ctx.fillStyle = 'rgba(17, 17, 17, 0.2)'; 
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 ctx.lineWidth = 2;
                 ctx.strokeStyle = '#2ecc71';
@@ -415,10 +390,8 @@
                 for (let i = 0; i < bufferLength; i++) {
                     const v = dataArray[i] / 128.0;
                     const y = v * (canvas.height / 2);
-
                     if (i === 0) ctx.moveTo(x, y);
                     else ctx.lineTo(x, y);
-
                     x += sliceWidth;
                 }
                 ctx.lineTo(canvas.width, canvas.height / 2);
@@ -436,17 +409,23 @@
             document.getElementById('wave-visualizer').classList.add('active');
         }
 
-        // --- 5. TOOLS ---
-        function setStatus(msg) {
-            document.getElementById('status-text').innerText = msg;
-        }
-        function log(msg) {
+        // --- 5. HERRAMIENTAS Y LIMPIEZA ---
+        function setStatus(msg) { document.getElementById('status-text').innerText = msg; }
+        function log(msg) { 
             console.log(msg);
             const el = document.getElementById('console-log');
             el.innerHTML = `> ${msg}<br>` + el.innerHTML;
         }
 
-        // NOTIFICACIONES (Código Original Preservado)
+        // SOLUCIÓN 2: LIMPIEZA AUTOMÁTICA AL CERRAR/RECARGAR
+        window.addEventListener('beforeunload', () => {
+            if (peer) {
+                log("Destruyendo sesión Peer...");
+                peer.destroy();
+            }
+        });
+
+        // NOTIFICACIONES
         async function iniciarFCM() {
             try {
                 let perm = await PushNotifications.checkPermissions();
@@ -454,10 +433,6 @@
                 if (perm.receive !== 'granted') return;
                 await PushNotifications.register();
                 PushNotifications.addListener('registration', t => registrarEnServidor(t.value));
-                PushNotifications.addListener('pushNotificationReceived', n => {
-                    // Si la app está en primer plano y recibe push, activamos lógica de llamada simulada si PeerJS no ha reaccionado aún
-                    log("Push Recibido");
-                });
             } catch (e) { console.log("FCM no disponible en web mode"); }
         }
 
@@ -468,7 +443,6 @@
                 body: JSON.stringify({ token: token, sala: 'puerta-principal' })
             }).catch(e => log("API Error"));
         }
-
     </script>
 </body>
 </html>
