@@ -125,7 +125,11 @@
                     const response = await fetch(API_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ token: token.value })
+                        // Agregamos 'sala' para que coincida con lo que pide tu servidor
+                        body: JSON.stringify({ 
+                            token: token.value, 
+                            sala: 'puerta-principal' 
+                        })
                     });
                     
                     if (response.ok) {
