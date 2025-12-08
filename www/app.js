@@ -13,7 +13,7 @@ let analyser = null;
 let ringtoneOscillator = null; 
 let callTimeout = null;
 let isMuted = false;
-let wakeLock = null;
+let wakeLock = null; // Variable global para el WakeLock
 let keepaliveInterval = null;
 let keepaliveCount = 0;
 let isCapacitorAvailable = false;
@@ -32,27 +32,35 @@ function log(msg) {
 }
 
 // ============================================
-// WAKE LOCK - Mantener pantalla activa
+// WAKE LOCK - Mantener pantalla activa (OPTIMIZADO)
 // ============================================
 async function requestWakeLock() {
+    // CORRECCIÓN: Si la app no es visible, NO pedir el lock para evitar errores y bucles.
+    if (document.visibilityState !== 'visible') {
+        log('⚠️ App en background: Omitiendo solicitud de Wake Lock');
+        return;
+    }
+
     try {
         if ('wakeLock' in navigator) {
             wakeLock = await navigator.wakeLock.request('screen');
-            log('✅ Wake Lock ACTIVADO');
-            
+            log('✅ Screen Wake Lock ACTIVO');
+
             wakeLock.addEventListener('release', () => {
-                log('⚠️ Wake Lock liberado - re-adquiriendo...');
-                setTimeout(requestWakeLock, 100);
+                log('ℹ️ Screen Wake Lock liberado por el sistema');
+                wakeLock = null; // Marcamos como null para saber que se perdió
             });
         } else {
             log('⚠️ Wake Lock NO soportado en este navegador');
         }
     } catch (err) {
-        log('❌ Wake Lock error: ' + err.message);
+        log(`❌ Error WakeLock: ${err.name}, ${err.message}`);
     }
 }
 
+// Reactivar solo cuando el usuario vuelve a abrir la app
 document.addEventListener('visibilitychange', async () => {
+    // Si la app vuelve a ser visible y no tenemos lock, lo pedimos
     if (document.visibilityState === 'visible' && wakeLock === null) {
         await requestWakeLock();
     }
@@ -106,6 +114,7 @@ function iniciarKeepalive() {
         
     }, 15000); // Cada 15 segundos
 }
+
 // ============================================
 // INICIALIZACIÓN PRINCIPAL
 // ============================================
@@ -130,7 +139,7 @@ window.iniciarApp = async function() {
             setTimeout(() => onboarding.remove(), 500);
         }
         
-        // 4. Wake Lock
+        // 4. Wake Lock (Optimizado)
         await requestWakeLock();
         
         // 5. Iniciar Capacitor si está disponible
@@ -204,6 +213,14 @@ async function iniciarCapacitor() {
                 console.log(notification);
             });
 
+            // --- NUEVO: Listener para cuando tocan la notificación ---
+            PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
+                log('🔔 Usuario tocó la notificación. Abriendo app...');
+                // Traer ventana al frente si es posible
+                window.focus(); 
+                // Aquí podrías agregar lógica extra si quieres navegar a algún lado
+            });
+
         } else {
             log('🌐 Modo WEB - FCM no disponible');
         }
@@ -238,7 +255,7 @@ async function registrarEnServidor(token) {
 }
 
 // ============================================
-// CONFIGURACIÓN BACKGROUND MODE (AGREGAR ESTO)
+// CONFIGURACIÓN BACKGROUND MODE
 // ============================================
 document.addEventListener('deviceready', () => {
     // Verificamos si el plugin existe
@@ -272,6 +289,7 @@ document.addEventListener('deviceready', () => {
         log('⚠️ Cordova/Background plugin no detectado (¿Estás en web?)');
     }
 }, false);
+
 // ============================================
 // PEERJS CON RECONEXIÓN INTELIGENTE
 // ============================================
