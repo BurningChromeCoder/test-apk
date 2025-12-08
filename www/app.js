@@ -220,13 +220,22 @@ async function registrarEnServidor(token) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token: token, sala: 'puerta-principal' })
         });
-        const data = await res.json();
-        log('✅ Token registrado: ' + data.message);
+        
+        // Leemos la respuesta como texto primero para ver qué llega
+        const text = await res.text();
+        
+        try {
+            const data = JSON.parse(text);
+            // Imprimimos todo el objeto data para ver qué responde el servidor
+            log('✅ Respuesta Servidor: ' + JSON.stringify(data));
+        } catch (e) {
+            log('✅ Token enviado (Servidor respondió texto): ' + text);
+        }
+        
     } catch (e) {
         log('❌ Error registro token: ' + e.message);
     }
 }
-
 // ============================================
 // PEERJS CON RECONEXIÓN INTELIGENTE
 // ============================================
