@@ -30,23 +30,20 @@ jobs:
     - name: Build Web Assets
       run: npm run build
       
-    # 1. Creamos la carpeta Android
     - name: Add Android platform
       run: npx cap add android || true 
 
-    # 2. INYECCIÓN DE PERMISOS (CRÍTICO PARA LLAMADAS)
+    # --- INYECCIÓN DE PERMISOS (VERSIÓN HARDCORE) ---
     - name: Inject Permissions into Manifest
       run: |
-        # Ruta del archivo que crea Capacitor
         MANIFEST="android/app/src/main/AndroidManifest.xml"
         
-        # LISTA DE PERMISOS: Incluye ahora USE_FULL_SCREEN_INTENT y WAKE_LOCK
-        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.CAMERA" /><uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-feature android:name="android.hardware.camera" />'
+        # Permisos necesarios: Internet, Camara, Audio, Full Screen (Llamada), Wake Lock, y Foreground Service (Background Mode)
+        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.CAMERA" /><uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.FOREGROUND_SERVICE" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" /><uses-feature android:name="android.hardware.camera" />'
         
-        # Insertamos los permisos justo antes de la etiqueta <application>
+        # Insertamos antes de <application>
         sed -i "s|<application|$PERMISSIONS <application|g" $MANIFEST
         
-        # Verificación en log
         echo "--- MANIFEST MODIFICADO ---"
         cat $MANIFEST
 
