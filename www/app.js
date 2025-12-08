@@ -384,14 +384,29 @@ function iniciarPeer() {
     });
 
     peer.on('error', (err) => {
-        log('❌ PeerJS Error: ' + err.type + ' - ' + err.message);
+        log('❌ PeerJS Error: ' + err.type); // Simplificamos log
         updateNetworkStatus('offline');
         
+        // CASO CRÍTICO: El ID sigue tomado por nuestra sesión anterior (Zombie)
         if (err.type === 'unavailable-id') {
-            alert("⚠️ Este ID ya está en uso. Cierra otras pestañas.");
-        } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'peer-unavailable') {
-            log('🔄 Error de red, reintentando en 3s...');
-            setTimeout(iniciarPeer, 3000);
+            log('⚠️ ID "en uso". Posible sesión zombie. Reintentando en 2s...');
+            
+            // Destruimos este intento fallido para limpiar memoria
+            if (peer) peer.destroy();
+            
+            // Reintentamos automáticamente. El servidor PeerJS suele liberar el ID 
+            // tras unos segundos de inactividad del socket viejo.
+            setTimeout(iniciarPeer, 1000); 
+            
+        } 
+        // CASO RED: Pérdida de conexión o error de servidor
+        else if (err.type === 'network' || err.type === 'server-error' || err.type === 'peer-unavailable') {
+            log('🔄 Error de red (' + err.type + '), reintentando en 2s...');
+            setTimeout(iniciarPeer, 2000);
+        }
+        // Otros errores (ej. navegador incompatible)
+        else {
+            log('❌ Error fatal: ' + err.message);
         }
     });
 
