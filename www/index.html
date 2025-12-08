@@ -10,14 +10,13 @@
         :root { --primary: #2ecc71; --danger: #e74c3c; --bg: #111; --glass: rgba(255,255,255,0.1); }
         body { background: var(--bg); color: #fff; font-family: -apple-system, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
-        #console-log { position: absolute; top: 10px; left: 10px; font-size: 9px; opacity: 0.5; pointer-events: none; z-index: 5; text-shadow: 0 1px 2px #000; max-height: 50px; overflow: hidden; }
+        #console-log { position: absolute; top: 10px; left: 10px; font-size: 9px; opacity: 0.5; pointer-events: none; z-index: 5; text-shadow: 0 1px 2px #000; max-height: 100px; overflow: auto; }
         #network-badge { position: absolute; top: 15px; right: 15px; z-index: 10; padding: 5px 12px; border-radius: 15px; background: rgba(0,0,0,0.6); font-size: 11px; display: flex; align-items: center; gap: 6px; backdrop-filter: blur(5px); border: 1px solid rgba(255,255,255,0.1); }
         .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
         .dot.online { background: #2ecc71; box-shadow: 0 0 5px #2ecc71; }
         .dot.offline { background: #e74c3c; }
-        .dot.unstable { background: #f1c40f; }
 
-        #main-wrapper { flex-grow: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: filter 0.3s; }
+        #main-wrapper { flex-grow: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; }
         
         canvas#wave-visualizer { width: 100%; height: 300px; position: absolute; top: 50%; left: 0; transform: translateY(-50%); opacity: 0; transition: opacity 0.5s; z-index: 1; }
         canvas.active { opacity: 1 !important; }
@@ -28,7 +27,7 @@
 
         .controls-layer { position: absolute; bottom: 50px; width: 100%; display: flex; justify-content: center; gap: 30px; z-index: 20; transition: transform 0.3s; }
         .controls-layer.hidden { transform: translateY(150px); }
-        .btn { width: 70px; height: 70px; border-radius: 50%; border: none; font-size: 28px; cursor: pointer; color: white; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 20px rgba(0,0,0,0.4); transition: transform 0.2s; position: relative; overflow: hidden; }
+        .btn { width: 70px; height: 70px; border-radius: 50%; border: none; font-size: 28px; cursor: pointer; color: white; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 20px rgba(0,0,0,0.4); transition: transform 0.2s; }
         .btn:active { transform: scale(0.92); }
         
         .btn-answer { background: var(--primary); animation: pulse-ring 1.5s infinite; }
@@ -48,12 +47,12 @@
 
     <div id="onboarding">
         <div style="font-size: 50px; margin-bottom: 20px;">🚪</div>
-        <h1 style="margin:0; font-size:24px;">Monitor Puerta V3</h1>
-        <p style="color:#888;">El micrófono se activará solo al contestar.</p>
+        <h1 style="margin:0; font-size:24px;">Monitor Puerta V3.1</h1>
+        <p style="color:#888;">Mantendremos la app activa en segundo plano</p>
         <button class="btn-start" onclick="iniciarApp()">Entrar</button>
     </div>
 
-    <div id="console-log">Iniciando...</div>
+    <div id="console-log"></div>
     <div id="network-badge"><div id="net-dot" class="dot offline"></div><span id="net-text">Desconectado</span></div>
 
     <div id="main-wrapper">
@@ -77,16 +76,6 @@
 
     <audio id="remoteAudio" autoplay></audio>
 
-    <script>
-        document.addEventListener('deviceready', function () {
-             if(window.cordova && cordova.plugins.backgroundMode) {
-                 cordova.plugins.backgroundMode.enable();
-                 cordova.plugins.backgroundMode.setDefaults({ title: "Monitor Activo", text: "Esperando timbre...", resume: true, hidden: false, bigText: true });
-                 cordova.plugins.backgroundMode.on('activate', () => cordova.plugins.backgroundMode.disableWebViewOptimizations());
-             }
-        }, false);
-    </script>
-
     <script type="module">
         import { PushNotifications } from '@capacitor/push-notifications';
         
@@ -95,7 +84,7 @@
         
         let peer = null;
         let currentCall = null;
-        let currentDataConn = null; // Canal de datos
+        let currentDataConn = null;
         let localStream = null;
         let incomingCallRequest = null;
         let audioContext = null;
@@ -104,29 +93,83 @@
         let callTimeout = null;
         let isMuted = false;
         let reconnectInterval = null;
+        let wakeLock = null;
+
+        // SISTEMA DE LOGS
+        function log(msg) {
+            const logDiv = document.getElementById('console-log');
+            const time = new Date().toLocaleTimeString();
+            logDiv.innerHTML = `[${time}] ${msg}<br>` + logDiv.innerHTML;
+        }
+
+        // WAKE LOCK para mantener pantalla activa
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    log('✅ Wake Lock activado');
+                    
+                    wakeLock.addEventListener('release', () => {
+                        log('⚠️ Wake Lock liberado');
+                    });
+                }
+            } catch (err) {
+                log('❌ Wake Lock error: ' + err.message);
+            }
+        }
+
+        // RE-ADQUIRIR WAKE LOCK si la pantalla se apaga
+        document.addEventListener('visibilitychange', async () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') {
+                await requestWakeLock();
+            }
+        });
 
         window.iniciarApp = async function() {
             try {
+                log('🚀 Iniciando app...');
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
-                // --- TRUCO: LIBERAR MICRÓFONO ---
+                // Liberar micrófono inicial
                 const streamTemp = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                streamTemp.getTracks().forEach(track => track.stop()); // Lo soltamos
+                streamTemp.getTracks().forEach(track => track.stop());
+                log('✅ Permisos de audio OK');
                 
                 document.getElementById('onboarding').style.opacity = '0';
                 setTimeout(() => document.getElementById('onboarding').remove(), 500);
                 
+                await requestWakeLock();
                 await iniciarFCM(); 
                 iniciarPeer();
                 iniciarVisualizador();
-            } catch (e) { alert("Error permisos: " + e.message); }
+                
+                // Mantener conexión activa con heartbeat
+                setInterval(() => {
+                    if (peer && peer.open) {
+                        log('💓 Heartbeat - Conexión activa');
+                    } else if (peer && peer.disconnected) {
+                        log('⚠️ Peer desconectado, reconectando...');
+                        peer.reconnect();
+                    }
+                }, 30000); // Cada 30 segundos
+                
+            } catch (e) { 
+                log('❌ Error: ' + e.message);
+                alert("Error permisos: " + e.message); 
+            }
         };
 
         async function iniciarFCM() {
             try {
+                log('📱 Iniciando FCM...');
                 let perm = await PushNotifications.checkPermissions();
-                if (perm.receive === 'prompt') perm = await PushNotifications.requestPermissions();
-                if (perm.receive !== 'granted') return;
+                if (perm.receive === 'prompt') {
+                    perm = await PushNotifications.requestPermissions();
+                }
+                if (perm.receive !== 'granted') {
+                    log('❌ Permisos FCM denegados');
+                    return;
+                }
 
                 await PushNotifications.createChannel({
                     id: 'timbre_urgente',      
@@ -138,42 +181,88 @@
                 });
 
                 await PushNotifications.register();
-                PushNotifications.addListener('registration', t => registrarEnServidor(t.value));
-            } catch (e) { console.log("FCM Error: " + e.message); }
+                log('✅ FCM Registrado');
+                
+                PushNotifications.addListener('registration', t => {
+                    log('📲 Token FCM recibido');
+                    registrarEnServidor(t.value);
+                });
+
+                // CRÍTICO: Escuchar notificaciones mientras la app está abierta
+                PushNotifications.addListener('pushNotificationReceived', (notification) => {
+                    log('🔔 NOTIFICACIÓN RECIBIDA EN FOREGROUND');
+                    console.log('Push notification received:', notification);
+                    
+                    // Forzar que suene aunque la app esté abierta
+                    if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
+                });
+
+                // Escuchar cuando el usuario toca la notificación
+                PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
+                    log('👆 Usuario tocó notificación');
+                    console.log('Push action performed:', notification);
+                });
+
+            } catch (e) { 
+                log('❌ FCM Error: ' + e.message);
+            }
         }
 
         async function registrarEnServidor(token) {
-            fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: token, sala: 'puerta-principal' })
-            }).catch(e => console.log(e));
+            try {
+                log('📡 Registrando token en servidor...');
+                const res = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: token, sala: 'puerta-principal' })
+                });
+                const data = await res.json();
+                log('✅ Token registrado: ' + data.message);
+            } catch (e) {
+                log('❌ Error registro: ' + e.message);
+            }
         }
 
         function iniciarPeer() {
+            log('🔌 Conectando a PeerJS...');
             if (peer) peer.destroy(); 
             peer = new Peer(MY_ID, {
-                debug: 1,
-                config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+                debug: 2,
+                config: { 
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ] 
+                }
             });
 
             peer.on('open', (id) => {
+                log('✅ PeerJS conectado: ' + id);
                 updateNetworkStatus('online');
                 setStatus("✅ Listo para timbre");
-                if (reconnectInterval) clearInterval(reconnectInterval);
+                if (reconnectInterval) {
+                    clearInterval(reconnectInterval);
+                    reconnectInterval = null;
+                }
             });
 
-            // 1. ESCUCHAR CONEXIÓN DE DATOS (Para colgar)
+            // 1. Canal de datos (para colgar)
             peer.on('connection', (conn) => {
+                log('📨 Canal de datos abierto');
                 currentDataConn = conn;
                 conn.on('data', (data) => {
-                    if (data === 'CORTAR') finalizarLlamada(false); // false = no re-avisar
+                    log('📩 Dato recibido: ' + data);
+                    if (data === 'CORTAR') finalizarLlamada(false);
                 });
-                conn.on('close', () => finalizarLlamada(false));
+                conn.on('close', () => {
+                    log('📪 Canal de datos cerrado');
+                    finalizarLlamada(false);
+                });
             });
 
-            // 2. ESCUCHAR LLAMADA DE AUDIO
+            // 2. Llamada de audio
             peer.on('call', (call) => {
+                log('🔔 LLAMADA ENTRANTE de ' + call.peer);
                 incomingCallRequest = call;
                 setStatus("🔔 TIMBRE SONANDO");
                 document.getElementById('avatar').innerText = "🔔";
@@ -183,36 +272,54 @@
                 if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 1000]);
                 
                 if (callTimeout) clearTimeout(callTimeout);
-                callTimeout = setTimeout(() => rechazarLlamada(), 30000);
+                callTimeout = setTimeout(() => {
+                    log('⏱️ Timeout de llamada');
+                    rechazarLlamada();
+                }, 30000);
             });
 
             peer.on('error', (err) => {
+                log('❌ PeerJS error: ' + err.type);
                 updateNetworkStatus('offline');
                 if (err.type === 'unavailable-id') {
                     setStatus("⚠️ ID en uso");
                     alert("Cierra otras pestañas de la app.");
-                } else attemptReconnect();
+                } else {
+                    attemptReconnect();
+                }
             });
 
-            peer.on('disconnected', () => { updateNetworkStatus('offline'); attemptReconnect(); });
+            peer.on('disconnected', () => { 
+                log('⚠️ PeerJS desconectado');
+                updateNetworkStatus('offline'); 
+                attemptReconnect(); 
+            });
         }
 
         function attemptReconnect() {
             if (reconnectInterval) return;
             setStatus("📡 Reconectando...");
+            log('🔄 Intentando reconectar...');
             reconnectInterval = setInterval(() => {
-                if (peer && !peer.destroyed) peer.reconnect(); else iniciarPeer();
+                if (peer && !peer.destroyed) {
+                    log('🔄 Reconnect...');
+                    peer.reconnect();
+                } else {
+                    log('🔄 Recreando peer...');
+                    iniciarPeer();
+                }
             }, 5000);
         }
 
         window.contestarLlamada = async function() {
             if (!incomingCallRequest) return;
+            log('📞 Contestando llamada...');
             stopRinging();
             if (callTimeout) clearTimeout(callTimeout);
             
             try {
-                // AHORA PEDIMOS EL MICRÓFONO REAL
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                log('✅ Micrófono activado');
                 
                 document.getElementById('controls-incoming').classList.add('hidden');
                 document.getElementById('controls-active').classList.remove('hidden');
@@ -224,21 +331,30 @@
                 currentCall.answer(localStream);
                 
                 currentCall.on('stream', (remoteStream) => {
+                    log('🔊 Stream remoto recibido');
                     document.getElementById('remoteAudio').srcObject = remoteStream;
                     conectarVisualizador(remoteStream);
                 });
-                currentCall.on('close', () => finalizarLlamada(false));
+                currentCall.on('close', () => {
+                    log('📞 Llamada cerrada');
+                    finalizarLlamada(false);
+                });
 
-            } catch (err) { alert("Error mic: " + err.message); rechazarLlamada(); }
+            } catch (err) { 
+                log('❌ Error mic: ' + err.message);
+                alert("Error mic: " + err.message); 
+                rechazarLlamada(); 
+            }
         };
 
         window.rechazarLlamada = function() {
+            log('❌ Llamada rechazada');
             if (incomingCallRequest) incomingCallRequest.close();
             resetState();
         };
 
         window.finalizarLlamada = function(enviarAviso = true) {
-            // AVISAR AL OTRO LADO
+            log('🔴 Finalizando llamada...');
             if (enviarAviso && currentDataConn && currentDataConn.open) {
                 currentDataConn.send('CORTAR');
             }
@@ -251,13 +367,14 @@
             stopRinging();
             if (callTimeout) clearTimeout(callTimeout);
             
-            // SOLTAR MICRÓFONO
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
 
-            currentCall = null; incomingCallRequest = null; currentDataConn = null;
+            currentCall = null; 
+            incomingCallRequest = null; 
+            currentDataConn = null;
             
             document.getElementById('controls-incoming').classList.add('hidden');
             document.getElementById('controls-active').classList.add('hidden');
@@ -267,23 +384,26 @@
             setStatus("✅ Listo para timbre");
             document.getElementById('avatar').innerText = "🔒";
             updateNetworkStatus('online');
+            log('✅ Estado reseteado');
         }
 
-        // --- EXTRAS (Visualizador, Ringtone, etc) ---
         function startRinging() {
             if (!audioContext) return;
             ringtoneOscillator = audioContext.createOscillator();
             const gain = audioContext.createGain();
             ringtoneOscillator.type = 'square';
             ringtoneOscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-            ringtoneOscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.1);
-            const lfo = audioContext.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 4;
-            ringtoneOscillator.connect(gain); gain.connect(audioContext.destination);
-            gain.gain.value = 0.1; ringtoneOscillator.start();
+            ringtoneOscillator.connect(gain);
+            gain.connect(audioContext.destination);
+            gain.gain.value = 0.1;
+            ringtoneOscillator.start();
         }
 
         function stopRinging() {
-            if (ringtoneOscillator) { try { ringtoneOscillator.stop(); } catch(e){} ringtoneOscillator = null; }
+            if (ringtoneOscillator) { 
+                try { ringtoneOscillator.stop(); } catch(e){} 
+                ringtoneOscillator = null; 
+            }
             if (navigator.vibrate) navigator.vibrate(0);
         }
 
@@ -293,26 +413,37 @@
             isMuted = !isMuted;
             track.enabled = !isMuted;
             document.getElementById('btn-mute').classList.toggle('muted', isMuted);
+            log(isMuted ? '🔇 Mute ON' : '🔊 Mute OFF');
         };
 
         function iniciarVisualizador() {
             const canvas = document.getElementById('wave-visualizer');
             const ctx = canvas.getContext('2d');
-            canvas.width = window.innerWidth; canvas.height = 300;
+            canvas.width = window.innerWidth; 
+            canvas.height = 300;
             window.drawWave = function() {
                 requestAnimationFrame(window.drawWave);
                 if (!analyser) return;
-                const bufferLength = analyser.frequencyBinCount; const dataArray = new Uint8Array(bufferLength);
+                const bufferLength = analyser.frequencyBinCount; 
+                const dataArray = new Uint8Array(bufferLength);
                 analyser.getByteTimeDomainData(dataArray);
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.lineWidth = 2; ctx.strokeStyle = '#2ecc71'; ctx.beginPath();
-                const sliceWidth = canvas.width * 1.0 / bufferLength; let x = 0;
+                ctx.lineWidth = 2; 
+                ctx.strokeStyle = '#2ecc71'; 
+                ctx.beginPath();
+                const sliceWidth = canvas.width * 1.0 / bufferLength; 
+                let x = 0;
                 for (let i = 0; i < bufferLength; i++) {
-                    const v = dataArray[i] / 128.0; const y = v * (canvas.height / 2);
-                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); x += sliceWidth;
+                    const v = dataArray[i] / 128.0; 
+                    const y = v * (canvas.height / 2);
+                    if (i === 0) ctx.moveTo(x, y); 
+                    else ctx.lineTo(x, y); 
+                    x += sliceWidth;
                 }
-                ctx.lineTo(canvas.width, canvas.height / 2); ctx.stroke();
-            }; window.drawWave();
+                ctx.lineTo(canvas.width, canvas.height / 2); 
+                ctx.stroke();
+            }; 
+            window.drawWave();
         }
 
         function conectarVisualizador(stream) {
@@ -324,12 +455,15 @@
             document.getElementById('wave-visualizer').classList.add('active');
         }
 
-        function setStatus(msg) { document.getElementById('status-text').innerText = msg; }
+        function setStatus(msg) { 
+            document.getElementById('status-text').innerText = msg; 
+        }
+        
         function updateNetworkStatus(status) {
             const dot = document.getElementById('net-dot');
             const txt = document.getElementById('net-text');
             dot.className = 'dot ' + status;
-            txt.innerText = status === 'online' ? 'En Línea' : (status === 'offline' ? 'Desconectado' : 'Inestable');
+            txt.innerText = status === 'online' ? 'En Línea' : 'Desconectado';
         }
     </script>
 </body>
