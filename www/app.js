@@ -1,7 +1,7 @@
 import { connect } from 'twilio-video';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, onSnapshot, query, where, doc, updateDoc } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, query, where, doc, updateDoc, deleteDoc, getDocs, writeBatch } from 'firebase/firestore';
 
 // ============================================
 // CONFIGURACIÓN FIREBASE (DIRECTO - SIN API)
@@ -94,6 +94,9 @@ window.iniciarApp = async function() {
 
         // 🔥 NUEVO: ESCUCHA DIRECTA DE FIREBASE (Como el POC)
         iniciarEscuchaFirebase();
+        
+        // 🔥 NUEVO: LIMPIEZA AUTOMÁTICA
+        iniciarLimpiezaAutomatica();
 
         setStatus("✅ Listo para recibir llamadas");
         updateNetworkStatus('online');
@@ -156,6 +159,52 @@ function iniciarEscuchaFirebase() {
     });
     
     log('✅ Listener de Firebase activo');
+}
+
+// ============================================
+// 🔥 LIMPIEZA AUTOMÁTICA DE BASE DE DATOS
+// ============================================
+function iniciarLimpiezaAutomatica() {
+    log('🧹 Iniciando sistema de limpieza automática...');
+    
+    // Limpieza inmediata al iniciar (después de 5 segundos)
+    setTimeout(limpiarLlamadasViejas, 5000);
+    
+    // Limpieza periódica cada 10 minutos
+    setInterval(limpiarLlamadasViejas, 10 * 60 * 1000);
+}
+
+async function limpiarLlamadasViejas() {
+    try {
+        // Borrar llamadas con más de 5 minutos
+        const cincominutosAtras = new Date(Date.now() - 5 * 60 * 1000);
+        
+        const q = query(
+            collection(db, 'llamadas'),
+            where('timestamp', '<', cincominutosAtras)
+        );
+        
+        const snapshot = await getDocs(q);
+        
+        if (snapshot.empty) {
+            log('✅ BD limpia (no hay llamadas viejas)');
+            return;
+        }
+        
+        const batch = writeBatch(db);
+        let count = 0;
+        
+        snapshot.forEach((docSnap) => {
+            batch.delete(docSnap.ref);
+            count++;
+        });
+        
+        await batch.commit();
+        log(`🗑️ ${count} llamada(s) antigua(s) eliminada(s)`);
+        
+    } catch (error) {
+        log('⚠️ Error en limpieza automática: ' + error.message);
+    }
 }
 
 // ============================================
@@ -309,15 +358,18 @@ function participantConnected(participant) {
     });
 }
 
-window.rechazarLlamada = function() {
+window.rechazarLlamada = async function() {
     stopRinging();
     
-    // Actualizar estado en Firebase
+    // 🔥 ELIMINAR llamada rechazada de la BD
     if (currentLlamadaId) {
-        const llamadaRef = doc(db, 'llamadas', currentLlamadaId);
-        updateDoc(llamadaRef, {
-            estado: 'cancelada'
-        }).catch(e => log('Error actualizando estado: ' + e.message));
+        try {
+            const llamadaRef = doc(db, 'llamadas', currentLlamadaId);
+            await deleteDoc(llamadaRef);
+            log('🗑️ Llamada rechazada eliminada de BD');
+        } catch (error) {
+            log('⚠️ Error eliminando llamada: ' + error.message);
+        }
     }
     
     resetState();
@@ -325,11 +377,23 @@ window.rechazarLlamada = function() {
     log('❌ Rechazada');
 };
 
-window.finalizarLlamada = function(disconnect = true) {
+window.finalizarLlamada = async function(disconnect = true) {
     if (disconnect && activeRoom) {
         activeRoom.disconnect();
         activeRoom = null;
     }
+    
+    // 🔥 ELIMINAR llamada finalizada de la BD
+    if (currentLlamadaId) {
+        try {
+            const llamadaRef = doc(db, 'llamadas', currentLlamadaId);
+            await deleteDoc(llamadaRef);
+            log('🗑️ Llamada finalizada eliminada de BD');
+        } catch (error) {
+            log('⚠️ Error eliminando llamada: ' + error.message);
+        }
+    }
+    
     resetState();
 };
 
