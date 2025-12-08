@@ -5,9 +5,11 @@ import { PushNotifications } from '@capacitor/push-notifications'; // Importaci�
 // ============================================
 const MY_ID = "puerta-admin-v2"; 
 const ROOM_NAME = 'sala-principal'; // Nombre fijo de la sala
-const BASE_URL = 'https://registrarreceptor-6rmawrifca-uc.a.run.app'; // Ajusta esto si tu región es diferente
-const API_URL_REGISTRO = `${BASE_URL}/registrarReceptor`;
-const API_URL_TOKEN = `${BASE_URL}/obtenerTokenTwilio`;
+
+
+// PON ESTO EN SU LUGAR (URLs Explícitas):
+const API_URL_REGISTRO = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
+const API_URL_TOKEN    = 'https://us-central1-puerta-c3a71.cloudfunctions.net/obtenerTokenTwilio';
 
 // Variables Globales
 let activeRoom = null;
