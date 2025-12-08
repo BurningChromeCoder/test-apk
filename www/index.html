@@ -5,16 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Monitor Puerta Pro</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script type="module" src="capacitor.js"></script>
     
     <style>
-        :root { --primary: #2ecc71; --danger: #e74c3c; --bg: #111; --glass: rgba(255,255,255,0.1); }
+        :root { --primary: #2ecc71; --danger: #e74c3c; --bg: #111; }
         body { background: var(--bg); color: #fff; font-family: -apple-system, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
-        #console-log { position: absolute; top: 10px; left: 10px; font-size: 9px; opacity: 0.5; pointer-events: none; z-index: 5; text-shadow: 0 1px 2px #000; max-height: 100px; overflow: auto; }
-        #network-badge { position: absolute; top: 15px; right: 15px; z-index: 10; padding: 5px 12px; border-radius: 15px; background: rgba(0,0,0,0.6); font-size: 11px; display: flex; align-items: center; gap: 6px; backdrop-filter: blur(5px); border: 1px solid rgba(255,255,255,0.1); }
+        #console-log { position: absolute; top: 10px; left: 10px; font-size: 8px; opacity: 0.7; z-index: 5; background: rgba(0,0,0,0.7); padding: 8px; border-radius: 3px; max-width: 85%; max-height: 150px; overflow: auto; font-family: monospace; }
+        #network-badge { position: absolute; top: 15px; right: 15px; z-index: 10; padding: 5px 12px; border-radius: 15px; background: rgba(0,0,0,0.6); font-size: 11px; display: flex; align-items: center; gap: 6px; }
         .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
-        .dot.online { background: #2ecc71; box-shadow: 0 0 5px #2ecc71; }
+        .dot.online { background: #2ecc71; box-shadow: 0 0 5px #2ecc71; animation: pulse-dot 2s infinite; }
         .dot.offline { background: #e74c3c; }
+        
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
         #main-wrapper { flex-grow: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; }
         
@@ -34,26 +37,27 @@
         .btn-hangup { background: var(--danger); }
         .btn-mute { background: #f39c12; width: 50px; height: 50px; font-size: 20px; position: absolute; bottom: 20px; right: 30px; }
         .btn-mute.muted { background: #e74c3c; }
-        .btn-mute::after { content: ''; position: absolute; width: 100%; height: 2px; background: #fff; transform: rotate(45deg); opacity: 0; }
-        .btn-mute.muted::after { opacity: 1; }
 
         @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7); } 70% { box-shadow: 0 0 0 20px rgba(46, 204, 113, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); } }
 
-        #onboarding { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; box-sizing: border-box; }
-        .btn-start { padding: 15px 40px; background: white; color: black; border: none; border-radius: 30px; font-weight: bold; font-size: 18px; margin-top: 30px; }
+        #onboarding { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
+        .btn-start { padding: 15px 40px; background: white; color: black; border: none; border-radius: 30px; font-weight: bold; font-size: 18px; margin-top: 30px; cursor: pointer; }
+        
+        #keepalive-status { position: absolute; bottom: 10px; left: 10px; font-size: 10px; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 10px; }
     </style>
 </head>
 <body>
 
     <div id="onboarding">
         <div style="font-size: 50px; margin-bottom: 20px;">🚪</div>
-        <h1 style="margin:0; font-size:24px;">Monitor Puerta V3.1</h1>
-        <p style="color:#888;">Mantendremos la app activa en segundo plano</p>
+        <h1 style="margin:0; font-size:24px;">Monitor Puerta V4</h1>
+        <p style="color:#888; font-size:14px;">Sistema anti-delay con keepalive</p>
         <button class="btn-start" onclick="iniciarApp()">Entrar</button>
     </div>
 
-    <div id="console-log"></div>
+    <div id="console-log">Iniciando sistema...</div>
     <div id="network-badge"><div id="net-dot" class="dot offline"></div><span id="net-text">Desconectado</span></div>
+    <div id="keepalive-status">⏱️ Keepalive: <span id="keepalive-count">0</span></div>
 
     <div id="main-wrapper">
         <canvas id="wave-visualizer"></canvas>
@@ -76,11 +80,9 @@
 
     <audio id="remoteAudio" autoplay></audio>
 
-    <script type="module">
-        import { PushNotifications } from '@capacitor/push-notifications';
-        
+    <script>
         const MY_ID = "puerta-admin-v2"; 
-        const API_URL = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
+        const API_URL = 'https://us-central1-puerta-c3a71.cloudfunctions.net/registrarReceptor';
         
         let peer = null;
         let currentCall = null;
@@ -92,125 +94,191 @@
         let ringtoneOscillator = null; 
         let callTimeout = null;
         let isMuted = false;
-        let reconnectInterval = null;
         let wakeLock = null;
+        let keepaliveInterval = null;
+        let keepaliveCount = 0;
+        let isCapacitorAvailable = false;
+        let PushNotifications = null;
 
-        // SISTEMA DE LOGS
+        // ============================================
+        // SISTEMA DE LOGS CON TIMESTAMPS
+        // ============================================
         function log(msg) {
             const logDiv = document.getElementById('console-log');
             const time = new Date().toLocaleTimeString();
-            logDiv.innerHTML = `[${time}] ${msg}<br>` + logDiv.innerHTML;
+            logDiv.innerHTML = `<div>[${time}] ${msg}</div>` + logDiv.innerHTML;
+            console.log(`[${time}] ${msg}`);
         }
 
-        // WAKE LOCK para mantener pantalla activa
+        // ============================================
+        // WAKE LOCK - Mantener pantalla activa
+        // ============================================
         async function requestWakeLock() {
             try {
                 if ('wakeLock' in navigator) {
                     wakeLock = await navigator.wakeLock.request('screen');
-                    log('✅ Wake Lock activado');
+                    log('✅ Wake Lock ACTIVADO');
                     
                     wakeLock.addEventListener('release', () => {
-                        log('⚠️ Wake Lock liberado');
+                        log('⚠️ Wake Lock liberado - re-adquiriendo...');
+                        setTimeout(requestWakeLock, 100);
                     });
+                } else {
+                    log('⚠️ Wake Lock NO soportado en este navegador');
                 }
             } catch (err) {
                 log('❌ Wake Lock error: ' + err.message);
             }
         }
 
-        // RE-ADQUIRIR WAKE LOCK si la pantalla se apaga
         document.addEventListener('visibilitychange', async () => {
-            if (wakeLock !== null && document.visibilityState === 'visible') {
+            if (document.visibilityState === 'visible' && wakeLock === null) {
                 await requestWakeLock();
             }
         });
 
+        // ============================================
+        // KEEPALIVE AGRESIVO - Evitar que PeerJS se duerma
+        // ============================================
+        function iniciarKeepalive() {
+            if (keepaliveInterval) clearInterval(keepaliveInterval);
+            
+            keepaliveInterval = setInterval(() => {
+                keepaliveCount++;
+                document.getElementById('keepalive-count').innerText = keepaliveCount;
+                
+                // 1. Verificar estado de Peer
+                if (peer && peer.disconnected) {
+                    log('🔄 PEER DESCONECTADO - Reconectando...');
+                    peer.reconnect();
+                }
+                
+                // 2. Ping al servidor de señalización
+                if (peer && peer.socket && peer.socket.readyState === WebSocket.OPEN) {
+                    try {
+                        peer.socket.send(JSON.stringify({ type: 'PING' }));
+                        log('💓 Keepalive enviado - Conexión VIVA');
+                    } catch (e) {
+                        log('⚠️ Error en keepalive: ' + e.message);
+                    }
+                } else {
+                    log('⚠️ Socket no disponible - Estado: ' + (peer?.socket?.readyState || 'null'));
+                }
+                
+                // 3. Verificar AudioContext no suspendido
+                if (audioContext && audioContext.state === 'suspended') {
+                    audioContext.resume();
+                    log('🔊 AudioContext resumido');
+                }
+                
+            }, 15000); // Cada 15 segundos (más agresivo que antes)
+        }
+
+        // ============================================
+        // INICIALIZACIÓN PRINCIPAL
+        // ============================================
         window.iniciarApp = async function() {
             try {
-                log('🚀 Iniciando app...');
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                log('🚀 INICIANDO SISTEMA ANTI-DELAY...');
                 
-                // Liberar micrófono inicial
+                // 1. AudioContext
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                log('✅ AudioContext creado');
+                
+                // 2. Permisos de micrófono (liberar inmediatamente)
                 const streamTemp = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
                 streamTemp.getTracks().forEach(track => track.stop());
-                log('✅ Permisos de audio OK');
+                log('✅ Permisos de audio concedidos');
                 
+                // 3. Ocultar onboarding
                 document.getElementById('onboarding').style.opacity = '0';
                 setTimeout(() => document.getElementById('onboarding').remove(), 500);
                 
+                // 4. Wake Lock
                 await requestWakeLock();
-                await iniciarFCM(); 
+                
+                // 5. Iniciar Capacitor si está disponible
+                await iniciarCapacitor();
+                
+                // 6. Iniciar PeerJS
                 iniciarPeer();
+                
+                // 7. Visualizador
                 iniciarVisualizador();
                 
-                // Mantener conexión activa con heartbeat
-                setInterval(() => {
-                    if (peer && peer.open) {
-                        log('💓 Heartbeat - Conexión activa');
-                    } else if (peer && peer.disconnected) {
-                        log('⚠️ Peer desconectado, reconectando...');
-                        peer.reconnect();
-                    }
-                }, 30000); // Cada 30 segundos
+                // 8. KEEPALIVE AGRESIVO (CRÍTICO)
+                iniciarKeepalive();
+                
+                log('✅ SISTEMA COMPLETAMENTE INICIADO');
                 
             } catch (e) { 
-                log('❌ Error: ' + e.message);
-                alert("Error permisos: " + e.message); 
+                log('❌ ERROR CRÍTICO: ' + e.message);
+                alert("Error: " + e.message); 
             }
         };
 
-        async function iniciarFCM() {
+        // ============================================
+        // CAPACITOR / FCM (Solo en Android)
+        // ============================================
+        async function iniciarCapacitor() {
             try {
-                log('📱 Iniciando FCM...');
-                let perm = await PushNotifications.checkPermissions();
-                if (perm.receive === 'prompt') {
-                    perm = await PushNotifications.requestPermissions();
-                }
-                if (perm.receive !== 'granted') {
-                    log('❌ Permisos FCM denegados');
-                    return;
-                }
-
-                await PushNotifications.createChannel({
-                    id: 'timbre_urgente',      
-                    name: 'Timbre de Puerta',
-                    importance: 5,             
-                    visibility: 1,             
-                    vibration: true,
-                    sound: 'beep.wav'          
-                });
-
-                await PushNotifications.register();
-                log('✅ FCM Registrado');
-                
-                PushNotifications.addListener('registration', t => {
-                    log('📲 Token FCM recibido');
-                    registrarEnServidor(t.value);
-                });
-
-                // CRÍTICO: Escuchar notificaciones mientras la app está abierta
-                PushNotifications.addListener('pushNotificationReceived', (notification) => {
-                    log('🔔 NOTIFICACIÓN RECIBIDA EN FOREGROUND');
-                    console.log('Push notification received:', notification);
+                // Detectar si Capacitor está disponible
+                if (window.Capacitor) {
+                    log('📱 Capacitor DETECTADO - Modo Android');
+                    isCapacitorAvailable = true;
                     
-                    // Forzar que suene aunque la app esté abierta
-                    if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
-                });
+                    // Importar dinámicamente
+                    const module = await import('@capacitor/push-notifications');
+                    PushNotifications = module.PushNotifications;
+                    
+                    // Solicitar permisos
+                    let perm = await PushNotifications.checkPermissions();
+                    if (perm.receive === 'prompt') {
+                        perm = await PushNotifications.requestPermissions();
+                    }
+                    
+                    if (perm.receive !== 'granted') {
+                        log('⚠️ Permisos FCM DENEGADOS');
+                        return;
+                    }
 
-                // Escuchar cuando el usuario toca la notificación
-                PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
-                    log('👆 Usuario tocó notificación');
-                    console.log('Push action performed:', notification);
-                });
+                    // Crear canal de alta prioridad
+                    await PushNotifications.createChannel({
+                        id: 'timbre_urgente',      
+                        name: 'Timbre de Puerta',
+                        importance: 5,
+                        visibility: 1,
+                        vibration: true,
+                        sound: 'default'
+                    });
+                    log('✅ Canal FCM creado');
 
+                    // Registrar
+                    await PushNotifications.register();
+                    log('✅ FCM Registro iniciado');
+                    
+                    // Listeners
+                    PushNotifications.addListener('registration', async (token) => {
+                        log('📲 Token FCM recibido');
+                        await registrarEnServidor(token.value);
+                    });
+
+                    PushNotifications.addListener('pushNotificationReceived', (notification) => {
+                        log('🔔 PUSH RECIBIDA EN FOREGROUND');
+                        console.log(notification);
+                    });
+
+                } else {
+                    log('🌐 Modo WEB - FCM no disponible');
+                }
             } catch (e) { 
-                log('❌ FCM Error: ' + e.message);
+                log('⚠️ Capacitor no disponible: ' + e.message);
             }
         }
 
         async function registrarEnServidor(token) {
             try {
-                log('📡 Registrando token en servidor...');
+                log('📡 Registrando token FCM en servidor...');
                 const res = await fetch(API_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -219,145 +287,188 @@
                 const data = await res.json();
                 log('✅ Token registrado: ' + data.message);
             } catch (e) {
-                log('❌ Error registro: ' + e.message);
+                log('❌ Error registro token: ' + e.message);
             }
         }
 
+        // ============================================
+        // PEERJS CON RECONEXIÓN INTELIGENTE
+        // ============================================
         function iniciarPeer() {
-            log('🔌 Conectando a PeerJS...');
-            if (peer) peer.destroy(); 
+            log('🔌 Iniciando PeerJS...');
+            if (peer) {
+                peer.destroy();
+                log('♻️ Peer anterior destruido');
+            }
+            
             peer = new Peer(MY_ID, {
                 debug: 2,
                 config: { 
                     iceServers: [
                         { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' }
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                        { urls: 'stun:stun2.l.google.com:19302' }
                     ] 
-                }
+                },
+                // Configuración anti-timeout
+                pingInterval: 5000 // Ping cada 5 segundos
             });
 
             peer.on('open', (id) => {
-                log('✅ PeerJS conectado: ' + id);
+                log('✅ PeerJS CONECTADO: ' + id);
                 updateNetworkStatus('online');
-                setStatus("✅ Listo para timbre");
-                if (reconnectInterval) {
-                    clearInterval(reconnectInterval);
-                    reconnectInterval = null;
-                }
+                setStatus("✅ Listo para recibir llamadas");
             });
 
-            // 1. Canal de datos (para colgar)
+            // Canal de datos (para colgar)
             peer.on('connection', (conn) => {
-                log('📨 Canal de datos abierto');
+                log('📨 Canal de datos establecido');
                 currentDataConn = conn;
+                
+                conn.on('open', () => log('✅ Canal de datos ABIERTO'));
+                
                 conn.on('data', (data) => {
                     log('📩 Dato recibido: ' + data);
                     if (data === 'CORTAR') finalizarLlamada(false);
                 });
+                
                 conn.on('close', () => {
                     log('📪 Canal de datos cerrado');
-                    finalizarLlamada(false);
                 });
             });
 
-            // 2. Llamada de audio
+            // LLAMADA ENTRANTE
             peer.on('call', (call) => {
-                log('🔔 LLAMADA ENTRANTE de ' + call.peer);
+                log('🔔🔔🔔 LLAMADA ENTRANTE de ' + call.peer);
                 incomingCallRequest = call;
+                
                 setStatus("🔔 TIMBRE SONANDO");
                 document.getElementById('avatar').innerText = "🔔";
                 document.getElementById('controls-incoming').classList.remove('hidden');
                 
                 startRinging();
-                if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 1000]);
+                if (navigator.vibrate) {
+                    navigator.vibrate([500, 200, 500, 200, 500, 200, 1000]);
+                }
                 
+                // Auto-rechazar después de 30 segundos
                 if (callTimeout) clearTimeout(callTimeout);
                 callTimeout = setTimeout(() => {
-                    log('⏱️ Timeout de llamada');
+                    log('⏱️ Timeout: Llamada no contestada');
                     rechazarLlamada();
                 }, 30000);
             });
 
             peer.on('error', (err) => {
-                log('❌ PeerJS error: ' + err.type);
+                log('❌ PeerJS Error: ' + err.type + ' - ' + err.message);
                 updateNetworkStatus('offline');
+                
                 if (err.type === 'unavailable-id') {
-                    setStatus("⚠️ ID en uso");
-                    alert("Cierra otras pestañas de la app.");
-                } else {
-                    attemptReconnect();
+                    alert("⚠️ Este ID ya está en uso. Cierra otras pestañas.");
+                } else if (err.type === 'network' || err.type === 'server-error') {
+                    log('🔄 Error de red, reintentando en 3s...');
+                    setTimeout(iniciarPeer, 3000);
                 }
             });
 
             peer.on('disconnected', () => { 
-                log('⚠️ PeerJS desconectado');
+                log('⚠️ PeerJS DESCONECTADO');
                 updateNetworkStatus('offline'); 
-                attemptReconnect(); 
+                setStatus("📡 Reconectando...");
+                
+                // Intentar reconectar inmediatamente
+                setTimeout(() => {
+                    if (peer && !peer.destroyed) {
+                        peer.reconnect();
+                    } else {
+                        iniciarPeer();
+                    }
+                }, 2000);
+            });
+
+            peer.on('close', () => {
+                log('🔴 Peer CERRADO completamente');
             });
         }
 
-        function attemptReconnect() {
-            if (reconnectInterval) return;
-            setStatus("📡 Reconectando...");
-            log('🔄 Intentando reconectar...');
-            reconnectInterval = setInterval(() => {
-                if (peer && !peer.destroyed) {
-                    log('🔄 Reconnect...');
-                    peer.reconnect();
-                } else {
-                    log('🔄 Recreando peer...');
-                    iniciarPeer();
-                }
-            }, 5000);
-        }
-
+        // ============================================
+        // CONTESTAR LLAMADA
+        // ============================================
         window.contestarLlamada = async function() {
-            if (!incomingCallRequest) return;
-            log('📞 Contestando llamada...');
+            if (!incomingCallRequest) {
+                log('⚠️ No hay llamada entrante');
+                return;
+            }
+            
+            log('📞 CONTESTANDO LLAMADA...');
             stopRinging();
             if (callTimeout) clearTimeout(callTimeout);
             
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                log('✅ Micrófono activado');
+                // Activar micrófono REAL
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }, 
+                    video: false 
+                });
+                log('✅ Micrófono ACTIVADO');
                 
+                // Actualizar UI
                 document.getElementById('controls-incoming').classList.add('hidden');
                 document.getElementById('controls-active').classList.remove('hidden');
                 document.getElementById('btn-mute').style.display = 'flex'; 
-                setStatus("🟢 CONECTADO");
+                setStatus("🟢 EN LLAMADA");
                 document.getElementById('avatar').innerText = "🔊";
                 
+                // Contestar con nuestro stream
                 currentCall = incomingCallRequest;
                 currentCall.answer(localStream);
+                log('✅ Respuesta enviada al visitante');
                 
+                // Recibir su audio
                 currentCall.on('stream', (remoteStream) => {
-                    log('🔊 Stream remoto recibido');
+                    log('🔊 AUDIO REMOTO RECIBIDO');
                     document.getElementById('remoteAudio').srcObject = remoteStream;
                     conectarVisualizador(remoteStream);
                 });
+                
                 currentCall.on('close', () => {
-                    log('📞 Llamada cerrada');
+                    log('📞 Llamada CERRADA por el otro lado');
                     finalizarLlamada(false);
                 });
 
+                currentCall.on('error', (err) => {
+                    log('❌ Error en llamada: ' + err);
+                });
+
             } catch (err) { 
-                log('❌ Error mic: ' + err.message);
-                alert("Error mic: " + err.message); 
+                log('❌ Error al activar micrófono: ' + err.message);
+                alert("Error de micrófono: " + err.message); 
                 rechazarLlamada(); 
             }
         };
 
         window.rechazarLlamada = function() {
-            log('❌ Llamada rechazada');
+            log('❌ LLAMADA RECHAZADA');
             if (incomingCallRequest) incomingCallRequest.close();
             resetState();
         };
 
         window.finalizarLlamada = function(enviarAviso = true) {
-            log('🔴 Finalizando llamada...');
+            log('🔴 FINALIZANDO LLAMADA...');
+            
             if (enviarAviso && currentDataConn && currentDataConn.open) {
-                currentDataConn.send('CORTAR');
+                try {
+                    currentDataConn.send('CORTAR');
+                    log('📤 Señal CORTAR enviada');
+                } catch (e) {
+                    log('⚠️ Error enviando CORTAR: ' + e.message);
+                }
             }
+            
             if (currentCall) currentCall.close();
             if (currentDataConn) currentDataConn.close();
             resetState();
@@ -367,8 +478,12 @@
             stopRinging();
             if (callTimeout) clearTimeout(callTimeout);
             
+            // Liberar micrófono
             if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
+                localStream.getTracks().forEach(track => {
+                    track.stop();
+                    log('🎤 Track de audio detenido');
+                });
                 localStream = null;
             }
 
@@ -381,27 +496,38 @@
             document.getElementById('btn-mute').style.display = 'none';
             document.getElementById('wave-visualizer').classList.remove('active');
             
-            setStatus("✅ Listo para timbre");
+            setStatus("✅ Listo para recibir llamadas");
             document.getElementById('avatar').innerText = "🔒";
             updateNetworkStatus('online');
-            log('✅ Estado reseteado');
+            log('✅ Estado RESETEADO');
         }
 
+        // ============================================
+        // UTILIDADES
+        // ============================================
         function startRinging() {
             if (!audioContext) return;
-            ringtoneOscillator = audioContext.createOscillator();
-            const gain = audioContext.createGain();
-            ringtoneOscillator.type = 'square';
-            ringtoneOscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-            ringtoneOscillator.connect(gain);
-            gain.connect(audioContext.destination);
-            gain.gain.value = 0.1;
-            ringtoneOscillator.start();
+            try {
+                ringtoneOscillator = audioContext.createOscillator();
+                const gain = audioContext.createGain();
+                ringtoneOscillator.type = 'square';
+                ringtoneOscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                ringtoneOscillator.connect(gain);
+                gain.connect(audioContext.destination);
+                gain.gain.value = 0.15;
+                ringtoneOscillator.start();
+                log('🔔 Timbre sonando');
+            } catch (e) {
+                log('⚠️ Error en timbre: ' + e.message);
+            }
         }
 
         function stopRinging() {
             if (ringtoneOscillator) { 
-                try { ringtoneOscillator.stop(); } catch(e){} 
+                try { 
+                    ringtoneOscillator.stop(); 
+                    log('🔕 Timbre detenido');
+                } catch(e){} 
                 ringtoneOscillator = null; 
             }
             if (navigator.vibrate) navigator.vibrate(0);
@@ -413,7 +539,7 @@
             isMuted = !isMuted;
             track.enabled = !isMuted;
             document.getElementById('btn-mute').classList.toggle('muted', isMuted);
-            log(isMuted ? '🔇 Mute ON' : '🔊 Mute OFF');
+            log(isMuted ? '🔇 Micrófono MUTEADO' : '🔊 Micrófono ACTIVO');
         };
 
         function iniciarVisualizador() {
@@ -421,18 +547,23 @@
             const ctx = canvas.getContext('2d');
             canvas.width = window.innerWidth; 
             canvas.height = 300;
-            window.drawWave = function() {
-                requestAnimationFrame(window.drawWave);
+            
+            function drawWave() {
+                requestAnimationFrame(drawWave);
                 if (!analyser) return;
+                
                 const bufferLength = analyser.frequencyBinCount; 
                 const dataArray = new Uint8Array(bufferLength);
                 analyser.getByteTimeDomainData(dataArray);
+                
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.lineWidth = 2; 
                 ctx.strokeStyle = '#2ecc71'; 
                 ctx.beginPath();
-                const sliceWidth = canvas.width * 1.0 / bufferLength; 
+                
+                const sliceWidth = canvas.width / bufferLength; 
                 let x = 0;
+                
                 for (let i = 0; i < bufferLength; i++) {
                     const v = dataArray[i] / 128.0; 
                     const y = v * (canvas.height / 2);
@@ -440,19 +571,26 @@
                     else ctx.lineTo(x, y); 
                     x += sliceWidth;
                 }
+                
                 ctx.lineTo(canvas.width, canvas.height / 2); 
                 ctx.stroke();
-            }; 
-            window.drawWave();
+            }
+            
+            drawWave();
         }
 
         function conectarVisualizador(stream) {
             if (!audioContext) return;
-            const source = audioContext.createMediaStreamSource(stream);
-            analyser = audioContext.createAnalyser();
-            analyser.fftSize = 2048;
-            source.connect(analyser);
-            document.getElementById('wave-visualizer').classList.add('active');
+            try {
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                source.connect(analyser);
+                document.getElementById('wave-visualizer').classList.add('active');
+                log('📊 Visualizador CONECTADO');
+            } catch (e) {
+                log('⚠️ Error visualizador: ' + e.message);
+            }
         }
 
         function setStatus(msg) { 
@@ -465,6 +603,12 @@
             dot.className = 'dot ' + status;
             txt.innerText = status === 'online' ? 'En Línea' : 'Desconectado';
         }
+
+        // Cleanup al cerrar
+        window.addEventListener('beforeunload', () => {
+            if (keepaliveInterval) clearInterval(keepaliveInterval);
+            if (peer) peer.destroy();
+        });
     </script>
 </body>
 </html>
