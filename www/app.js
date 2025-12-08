@@ -2,28 +2,29 @@ import { connect } from 'twilio-video';
 import { PushNotifications } from '@capacitor/push-notifications';
 
 // ============================================
-// CONFIGURACIÓN Y CONSTANTES (V5 STABLE)
+// CONFIGURACIÓN Y CONSTANTES (V6 COST SAVER)
 // ============================================
 const MY_ID = "puerta-admin-v2"; 
 const ROOM_NAME = 'sala-principal'; 
 
-// 🛑 URLs EXACTAS (Ajustadas a tu despliegue mixto)
-// Para registrar el token FCM (Cloud Run Gen 2)
-const API_URL_REGISTRO = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
-// Para obtener el token de Twilio (Cloud Functions Gen 1)
-const API_URL_TOKEN    = 'https://us-central1-puerta-c3a71.cloudfunctions.net/obtenerTokenTwilio';
+// 🛑 URLs EXACTAS (Verifica tus despliegues en Terminal)
+// 1. Registro de Token FCM (Gen 2)
+const API_URL_REGISTRO  = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
+// 2. Obtención de Token Twilio (Gen 1)
+const API_URL_TOKEN     = 'https://us-central1-puerta-c3a71.cloudfunctions.net/obtenerTokenTwilio';
+// 3. Responder/Aceptar llamada (Gen 2 - NUEVA)
+const API_URL_RESPONDER = 'https://responderllamada-6rmawrifca-uc.a.run.app';
 
 // Variables Globales
 let activeRoom = null;
+let currentLlamadaId = null; // <--- AQUÍ GUARDAMOS QUIÉN LLAMA
 let audioContext = null;
 let ringtoneOscillator = null; 
-let callTimeout = null;
 let isMuted = false;
 let wakeLock = null;
-let keepaliveInterval = null;
 
 // ============================================
-// SISTEMA DE LOGS VISUAL
+// SISTEMA DE LOGS
 // ============================================
 function log(msg) {
     const logDiv = document.getElementById('console-log');
@@ -34,16 +35,15 @@ function log(msg) {
     console.log(`[App] ${msg}`);
 }
 
-/* --- EVENTO RESUME: Cuando vuelves a abrir la app manualmente --- */
+/* --- EVENTO RESUME --- */
 document.addEventListener('resume', () => {
-    log('☀️ APP EN PRIMER PLANO (Resume)');
+    log('☀️ APP EN PRIMER PLANO');
     requestWakeLock();
-    // Limpiamos notificaciones viejas de la barra para que no molesten
     if(window.Capacitor) PushNotifications.removeAllDeliveredNotifications();
 }, false);
 
 // ============================================
-// WAKE LOCK (Mantener pantalla activa)
+// WAKE LOCK
 // ============================================
 async function requestWakeLock() {
     if (document.visibilityState !== 'visible') return;
@@ -62,31 +62,29 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ============================================
-// INICIALIZACIÓN PRINCIPAL
+// INICIALIZACIÓN
 // ============================================
 window.iniciarApp = async function() {
     try {
-        log('🚀 INICIANDO MONITOR V5 (Twilio + BgMode)...');
+        log('🚀 INICIANDO MONITOR V6 (Cost Saver)...');
         
-        // 1. AudioContext (Necesario click usuario primero para desbloquear audio)
+        // 1. AudioContext
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         
-        // 2. Limpieza UI (Quitar pantalla de bienvenida)
+        // 2. Limpieza UI
         const onboarding = document.getElementById('onboarding');
         if(onboarding) {
             onboarding.style.opacity = '0';
             setTimeout(() => onboarding.remove(), 500);
         }
         
-        // 3. Iniciar Servicios
+        // 3. Servicios
         await requestWakeLock();
-        await iniciarCapacitor(); // Configura Push
+        await iniciarCapacitor();
         iniciarVisualizador();
-        
-        // 4. Activar Background Mode INMEDIATAMENTE
         activarModoSegundoPlano();
 
-        // 5. Estado Inicial (Punto verde = Listo para recibir notificaciones)
+        // 4. Estado
         setStatus("✅ Listo para recibir llamadas");
         updateNetworkStatus('online');
         
@@ -97,33 +95,26 @@ window.iniciarApp = async function() {
 };
 
 // ============================================
-// MODO SEGUNDO PLANO (CRÍTICO PARA QUE NO DUERMA)
+// MODO SEGUNDO PLANO
 // ============================================
 function activarModoSegundoPlano() {
     document.addEventListener('deviceready', () => {
         if (window.cordova && window.cordova.plugins && window.cordova.plugins.backgroundMode) {
             const bg = window.cordova.plugins.backgroundMode;
-            
-            bg.enable(); // Habilitar permiso
-            
-            // Configuración agresiva para que Android no mate la app
+            bg.enable();
             bg.setDefaults({
                 title: "Monitor Puerta",
                 text: "Esperando llamadas...",
                 color: '#2ecc71',
-                hidden: false, // Mostrar notificación fija es vital en Android modernos
+                hidden: false,
                 bigText: true,
                 resume: true,
                 silent: false
             });
-
-            // Evita que el WebView se pause al apagar pantalla
             bg.on('activate', () => {
                 bg.disableWebViewOptimizations(); 
                 log('🔋 Background Mode: ACTIVO');
             });
-
-            // Permiso para abrir desde background (Android 10+)
             if (bg.isScreenOff && bg.isScreenOff()) {
                 bg.wakeUp();
                 bg.unlock();
@@ -133,13 +124,12 @@ function activarModoSegundoPlano() {
 }
 
 // ============================================
-// GESTIÓN DE NOTIFICACIONES (CAPACITOR)
+// NOTIFICACIONES (CAPTURA DE ID)
 // ============================================
 async function iniciarCapacitor() {
     if (!window.Capacitor) return;
     
     try {
-        // Solicitar permisos
         let perm = await PushNotifications.checkPermissions();
         if (perm.receive === 'prompt') perm = await PushNotifications.requestPermissions();
         
@@ -148,7 +138,6 @@ async function iniciarCapacitor() {
             return;
         }
 
-        // Crear canal de Alta Prioridad (Sonido fuerte, vibración)
         await PushNotifications.createChannel({
             id: 'timbre_urgente',       
             name: 'Timbre Puerta',
@@ -165,33 +154,17 @@ async function iniciarCapacitor() {
             await registrarEnServidor(token.value);
         });
 
-        // CASO 1: Llega la notificación (App abierta o cerrada)
+        // CASO 1: Recibido
         PushNotifications.addListener('pushNotificationReceived', (notification) => {
             log('🔔 NOTIFICACIÓN RECIBIDA');
-            
-            // Forzamos sonido inmediato aunque no toquen nada
-            startRinging();
-            
-            // Cambiamos UI
-            setStatus("🔔 TIMBRE SONANDO");
-            document.getElementById('avatar').innerText = "🔔";
-            document.getElementById('controls-incoming').classList.remove('hidden');
-            
-            // Intentar traer al frente automágicamente (opcional, puede ser intrusivo)
-            traerAlFrente();
+            procesarNotificacion(notification);
         });
 
-        // CASO 2: Usuario TOCA la notificación
+        // CASO 2: Tocado
         PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
-            log('👆 Usuario tocó notificación. ABRIENDO...');
-            
-            // 1. FORZAR LA APP AL FRENTE (SOLUCIÓN A TU PROBLEMA DE FOCO)
+            log('👆 Usuario abrió notificación');
+            procesarNotificacion(notification.notification);
             traerAlFrente();
-
-            // 2. Preparar UI por si acaso no estaba lista
-            startRinging(); 
-            setStatus("🔔 TIMBRE SONANDO");
-            document.getElementById('controls-incoming').classList.remove('hidden');
         });
 
     } catch (e) {
@@ -199,22 +172,29 @@ async function iniciarCapacitor() {
     }
 }
 
-// Función auxiliar mágica para traer la app al frente
+function procesarNotificacion(notification) {
+    // 1. CAPTURAR EL ID DE LA LLAMADA (Vital para responder)
+    if (notification.data && notification.data.llamadaId) {
+        currentLlamadaId = notification.data.llamadaId;
+        log('🆔 ID LLAMADA: ' + currentLlamadaId);
+    } else {
+        log('⚠️ Notificación sin ID de llamada');
+    }
+
+    // 2. Activar Timbre y UI
+    startRinging();
+    setStatus("🔔 TIMBRE SONANDO");
+    document.getElementById('avatar').innerText = "🔔";
+    document.getElementById('controls-incoming').classList.remove('hidden');
+}
+
 function traerAlFrente() {
     if (window.cordova && window.cordova.plugins && window.cordova.plugins.backgroundMode) {
         const bg = window.cordova.plugins.backgroundMode;
-        
-        // 1. Despertar la pantalla
         bg.wakeUp();
-        // 2. Desbloquear (si no hay patrón seguro)
         bg.unlock();
-        // 3. Mover la actividad al frente
         bg.moveToForeground();
-        
-        // Foco web standard
         window.focus();
-        
-        log('⚡ Trayendo app al frente...');
     }
 }
 
@@ -232,14 +212,28 @@ async function registrarEnServidor(token) {
 }
 
 // ============================================
-// LÓGICA DE LLAMADA TWILIO (CONTESTAR)
+// CONTESTAR (LÓGICA V6)
 // ============================================
 window.contestarLlamada = async function() {
-    log('📞 CONTESTANDO...');
+    log('📞 INICIANDO CONEXIÓN...');
     stopRinging();
 
     try {
-        // 1. Obtener Token (Usando URL correcta Gen 1)
+        // PASO 1: AVISAR AL VISITANTE (Señalización)
+        if (currentLlamadaId) {
+            log('📡 Enviando señal ACEPTADA...');
+            const resResp = await fetch(API_URL_RESPONDER, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ llamadaId: currentLlamadaId })
+            });
+            if(!resResp.ok) log('⚠️ Advertencia: No se pudo avisar al servidor');
+        } else {
+            log('⚠️ No hay ID de llamada, conectando forzosamente...');
+        }
+
+        // PASO 2: OBTENER TOKEN DE VIDEO
+        log('🔑 Obteniendo credenciales...');
         const res = await fetch(API_URL_TOKEN, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -249,7 +243,8 @@ window.contestarLlamada = async function() {
         if(!res.ok) throw new Error('Error token: ' + res.status);
         const data = await res.json();
 
-        // 2. Conectar Twilio
+        // PASO 3: CONECTAR A TWILIO
+        log('☁️ Conectando video...');
         activeRoom = await connect(data.token, {
             name: ROOM_NAME,
             audio: { echoCancellation: true, autoGainControl: true },
@@ -258,14 +253,14 @@ window.contestarLlamada = async function() {
 
         log(`✅ EN LLAMADA: ${activeRoom.name}`);
         
-        // 3. UI Update
+        // UI Update
         document.getElementById('controls-incoming').classList.add('hidden');
         document.getElementById('controls-active').classList.remove('hidden');
         document.getElementById('btn-mute').style.display = 'flex'; 
         setStatus("🟢 EN LLAMADA");
         document.getElementById('avatar').innerText = "🔊";
 
-        // 4. Gestión Audio
+        // Gestión Audio
         activeRoom.participants.forEach(p => participantConnected(p));
         activeRoom.on('participantConnected', p => participantConnected(p));
         activeRoom.on('disconnected', () => finalizarLlamada(false));
@@ -278,12 +273,10 @@ window.contestarLlamada = async function() {
 };
 
 function participantConnected(participant) {
-    log(`👤 Visitante: ${participant.identity}`);
+    log(`👤 Visitante conectado: ${participant.identity}`);
     participant.on('trackSubscribed', track => {
-        log('🔊 Audio recibido');
-        // Conectar audio remoto
+        log('🔊 Audio remoto recibido');
         document.getElementById('remoteAudio').srcObject = new MediaStream([track.mediaStreamTrack]);
-        // Conectar visualizador
         conectarVisualizador(new MediaStream([track.mediaStreamTrack]));
     });
 }
@@ -292,6 +285,7 @@ window.rechazarLlamada = function() {
     stopRinging();
     resetState();
     if(window.Capacitor) PushNotifications.removeAllDeliveredNotifications();
+    log('❌ Llamada rechazada');
 };
 
 window.finalizarLlamada = function(disconnect = true) {
@@ -305,6 +299,7 @@ window.finalizarLlamada = function(disconnect = true) {
 function resetState() {
     stopRinging();
     activeRoom = null;
+    currentLlamadaId = null; // Limpiamos ID
     document.getElementById('controls-incoming').classList.add('hidden');
     document.getElementById('controls-active').classList.add('hidden');
     document.getElementById('btn-mute').style.display = 'none';
@@ -313,7 +308,7 @@ function resetState() {
 }
 
 // ============================================
-// UTILIDADES (Audio, UI, Visualizador)
+// UTILIDADES
 // ============================================
 function startRinging() {
     if (!audioContext) return;
@@ -368,7 +363,7 @@ function iniciarVisualizador() {
     
     function drawWave() {
         requestAnimationFrame(drawWave);
-        if (!window.analyserNode) return; // Usamos variable global temporal
+        if (!window.analyserNode) return; 
         
         const bufferLength = window.analyserNode.frequencyBinCount; 
         const dataArray = new Uint8Array(bufferLength);
@@ -399,7 +394,7 @@ function conectarVisualizador(stream) {
     if (!audioContext) return;
     try {
         const source = audioContext.createMediaStreamSource(stream);
-        window.analyserNode = audioContext.createAnalyser(); // Global para el loop
+        window.analyserNode = audioContext.createAnalyser(); 
         window.analyserNode.fftSize = 2048;
         source.connect(window.analyserNode);
         const waveVis = document.getElementById('wave-visualizer');
