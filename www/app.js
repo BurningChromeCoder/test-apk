@@ -19,9 +19,16 @@ window.addEventListener('unhandledrejection', function(e) {
 });
 
 // ============================================
-// IIFE ASYNC PARA EVITAR TOP-LEVEL AWAIT
+// ESPERAR A QUE EL DOM ESTÉ LISTO
 // ============================================
-(async function() {
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initApp);
+} else {
+    initApp();
+}
+
+async function initApp() {
+    console.log('🚀 Iniciando carga de módulos...');
 
 // ============================================
 // IMPORTACIONES CON TRY-CATCH
@@ -33,6 +40,7 @@ try {
     connect = twilioModule.connect;
     console.log('✅ Twilio cargado');
 } catch (e) {
+    console.error('Error cargando Twilio:', e);
     alert('Error cargando Twilio: ' + e.message);
 }
 
@@ -101,6 +109,9 @@ function log(msg) {
     console.log(`[App] ${msg}`);
 }
 
+// Primer log para verificar que el script se carga
+log('📄 app.js ejecutándose...');
+
 /* --- EVENTO RESUME --- */
 document.addEventListener('resume', () => {
     log('☀️ APP EN PRIMER PLANO');
@@ -134,7 +145,7 @@ document.addEventListener('visibilitychange', async () => {
 // ============================================
 window.iniciarApp = async function() {
     try {
-        log('🚀 INICIANDO V7.1 DEBUG...');
+        log('🚀 INICIANDO V7.2 DEBUG...');
         
         // Verificar elementos del DOM
         const requiredElements = ['console-log', 'status-text', 'avatar', 'controls-incoming', 'controls-active'];
@@ -560,6 +571,6 @@ function conectarVisualizador(stream) {
     }
 }
 
-log('📄 app.js cargado completamente');
+log('✅ Módulos cargados, esperando botón Entrar');
 
-})(); // FIN IIFE
+} // FIN initApp
