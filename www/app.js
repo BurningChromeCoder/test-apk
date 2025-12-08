@@ -1,5 +1,3 @@
-// www/app.js
-
 const MY_ID = "puerta-admin-v2"; 
 const API_URL = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
 
@@ -30,6 +28,31 @@ function log(msg) {
     }
     console.log(`[App] ${msg}`);
 }
+
+/* --- MODIFICACION ANTI-CORTE 1: EVENTO RESUME --- */
+// Detectar cuando el usuario desbloquea el celular para reconectar inmediatamente
+document.addEventListener('resume', () => {
+    log('☀️ APP VOLVIÓ AL PRIMER PLANO (Resume)');
+    
+    // 1. Restaurar WakeLock visual
+    requestWakeLock();
+    
+    // 2. Verificar salud de PeerJS
+    if (peer) {
+        if (peer.disconnected) {
+            log('🔄 Resume: Peer detectado desconectado. Reconectando...');
+            peer.reconnect();
+        } else if (peer.destroyed) {
+            log('🔄 Resume: Peer destruido. Reiniciando completo...');
+            iniciarPeer();
+        } else {
+             // Forzar un ping inmediato por si acaso
+             if(peer.socket && peer.socket._socket) {
+                 peer.socket._socket.send(JSON.stringify({ type: 'HEARTBEAT_RESUME' }));
+             }
+        }
+    }
+}, false);
 
 // ============================================
 // WAKE LOCK - Mantener pantalla activa (OPTIMIZADO)
@@ -67,44 +90,44 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ============================================
-// KEEPALIVE AGRESIVO - CORREGIDO
+// KEEPALIVE AGRESIVO - CORREGIDO Y POTENCIADO
 // ============================================
 function iniciarKeepalive() {
     if (keepaliveInterval) clearInterval(keepaliveInterval);
     
+    // Reducimos el intervalo a 4 segundos para ganar a los timeouts de Android
     keepaliveInterval = setInterval(() => {
         keepaliveCount++;
         const counterEl = document.getElementById('keepalive-count');
         if(counterEl) counterEl.innerText = keepaliveCount;
         
+        if (!peer || peer.destroyed) return;
+
         // 1. Verificar si PeerJS cree que está desconectado
-        if (peer && peer.disconnected) {
+        if (peer.disconnected) {
             log('🔄 PEER DESCONECTADO (Flag) - Reconectando...');
             peer.reconnect();
             return;
         }
         
-        // 2. Intentar Ping al Socket (Buscamos en .socket o ._socket)
-        // En PeerJS 1.5+ a veces el socket es interno (_socket)
-        const socket = peer?.socket || peer?._socket;
+        /* --- MODIFICACION ANTI-CORTE 2: HEARTBEAT DE SOCKET REAL --- */
+        // Intentar Ping al Socket REAL (Buscamos en .socket o ._socket)
+        // Esto envía datos por la red para que el router/Android no cierre el puerto
+        const socket = peer.socket || peer._socket;
 
-        if (socket && socket.readyState === 1) { // 1 = OPEN
+        if (socket && socket._socket && socket._socket.readyState === 1) { // 1 = OPEN
             try {
-                socket.send(JSON.stringify({ type: 'PING' }));
-                // No logueamos cada ping exitoso para no ensuciar la pantalla, solo si falla
+                // Enviamos un paquete "basura" pero válido JSON para mantener tráfico
+                socket._socket.send(JSON.stringify({ type: 'HEARTBEAT' }));
+                // No logueamos para no ensuciar la pantalla, sabemos que funciona
             } catch (e) {
-                log('⚠️ Error enviando Ping: ' + e.message);
+                log('⚠️ Error enviando Ping Socket: ' + e.message);
             }
         } else {
             // Solo avisar si realmente perdimos conexión
-            if(!peer || peer.destroyed) {
-                log('⚠️ Socket perdido y Peer destruido.');
-            } else {
-                // Si el peer está vivo pero no encontramos el socket, es un detalle interno de la librería,
-                // no es necesario spamear el log si el "Punto Verde" sigue activo.
-                console.log('ℹ️ Socket no accesible para ping manual (pero Peer sigue online)');
-            }
+             log('ℹ️ Socket no accesible o cerrado (Wait...)');
         }
+        /* --------------------------------------------------------- */
         
         // 3. Verificar AudioContext no suspendido
         if (audioContext && audioContext.state === 'suspended') {
@@ -112,7 +135,7 @@ function iniciarKeepalive() {
             log('🔊 AudioContext resumido');
         }
         
-    }, 5000); // Cada 15 segundos
+    }, 4000); // Cada 4 segundos (antes era 5 o 15, mejor 4)
 }
 
 // ============================================
@@ -189,7 +212,7 @@ async function iniciarCapacitor() {
 
             // Crear canal de alta prioridad
             await PushNotifications.createChannel({
-                id: 'timbre_urgente',      
+                id: 'timbre_urgente',       
                 name: 'Timbre de Puerta',
                 importance: 5,
                 visibility: 1,
@@ -281,8 +304,11 @@ document.addEventListener('deviceready', () => {
             window.cordova.plugins.backgroundMode.disableWebViewOptimizations(); 
             log('🔋 Background Mode ACTIVADO: Optimizaciones Webview deshabilitadas');
             
-            // Opcional: Forzar reconexión si es necesario
-            if (peer && peer.disconnected) peer.reconnect();
+            /* --- MODIFICACION ANTI-CORTE 3: FORZAR RECONEXION EN BACKGROUND --- */
+            if (peer && peer.disconnected) {
+                log('🔋 Background: Peer desconectado, reconectando...');
+                peer.reconnect();
+            }
         });
         
     } else {
@@ -302,12 +328,14 @@ function iniciarPeer() {
     
     // Peer es global porque cargamos el script desde CDN en index.html
     peer = new Peer(MY_ID, {
-        debug: 2,
+        debug: 1, // Bajamos debug para no saturar
         config: { 
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' }
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' }
             ] 
         },
         pingInterval: 5000 
@@ -361,24 +389,23 @@ function iniciarPeer() {
         
         if (err.type === 'unavailable-id') {
             alert("⚠️ Este ID ya está en uso. Cierra otras pestañas.");
-        } else if (err.type === 'network' || err.type === 'server-error') {
+        } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'peer-unavailable') {
             log('🔄 Error de red, reintentando en 3s...');
             setTimeout(iniciarPeer, 3000);
         }
     });
 
     peer.on('disconnected', () => { 
-        log('⚠️ PeerJS DESCONECTADO');
+        log('⚠️ PeerJS DESCONECTADO (Evento)');
         updateNetworkStatus('offline'); 
         setStatus("📡 Reconectando...");
         
-        setTimeout(() => {
-            if (peer && !peer.destroyed) {
-                peer.reconnect();
-            } else {
-                iniciarPeer();
-            }
-        }, 2000);
+        // Reintento inmediato si no está destruido
+        if (peer && !peer.destroyed) {
+            peer.reconnect();
+        } else {
+             setTimeout(iniciarPeer, 2000);
+        }
     });
 
     peer.on('close', () => {
