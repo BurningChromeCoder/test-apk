@@ -112,7 +112,7 @@ function iniciarKeepalive() {
             log('🔊 AudioContext resumido');
         }
         
-    }, 15000); // Cada 15 segundos
+    }, 5000); // Cada 15 segundos
 }
 
 // ============================================
