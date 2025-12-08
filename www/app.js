@@ -59,7 +59,7 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ============================================
-// KEEPALIVE AGRESIVO - Evitar que PeerJS se duerma
+// KEEPALIVE AGRESIVO - CORREGIDO
 // ============================================
 function iniciarKeepalive() {
     if (keepaliveInterval) clearInterval(keepaliveInterval);
@@ -69,22 +69,33 @@ function iniciarKeepalive() {
         const counterEl = document.getElementById('keepalive-count');
         if(counterEl) counterEl.innerText = keepaliveCount;
         
-        // 1. Verificar estado de Peer
+        // 1. Verificar si PeerJS cree que está desconectado
         if (peer && peer.disconnected) {
-            log('🔄 PEER DESCONECTADO - Reconectando...');
+            log('🔄 PEER DESCONECTADO (Flag) - Reconectando...');
             peer.reconnect();
+            return;
         }
         
-        // 2. Ping al servidor de señalización
-        if (peer && peer.socket && peer.socket.readyState === WebSocket.OPEN) {
+        // 2. Intentar Ping al Socket (Buscamos en .socket o ._socket)
+        // En PeerJS 1.5+ a veces el socket es interno (_socket)
+        const socket = peer?.socket || peer?._socket;
+
+        if (socket && socket.readyState === 1) { // 1 = OPEN
             try {
-                peer.socket.send(JSON.stringify({ type: 'PING' }));
-                log('💓 Keepalive enviado - Conexión VIVA');
+                socket.send(JSON.stringify({ type: 'PING' }));
+                // No logueamos cada ping exitoso para no ensuciar la pantalla, solo si falla
             } catch (e) {
-                log('⚠️ Error en keepalive: ' + e.message);
+                log('⚠️ Error enviando Ping: ' + e.message);
             }
         } else {
-            log('⚠️ Socket no disponible - Estado: ' + (peer?.socket?.readyState || 'null'));
+            // Solo avisar si realmente perdimos conexión
+            if(!peer || peer.destroyed) {
+                log('⚠️ Socket perdido y Peer destruido.');
+            } else {
+                // Si el peer está vivo pero no encontramos el socket, es un detalle interno de la librería,
+                // no es necesario spamear el log si el "Punto Verde" sigue activo.
+                console.log('ℹ️ Socket no accesible para ping manual (pero Peer sigue online)');
+            }
         }
         
         // 3. Verificar AudioContext no suspendido
@@ -95,7 +106,6 @@ function iniciarKeepalive() {
         
     }, 15000); // Cada 15 segundos
 }
-
 // ============================================
 // INICIALIZACIÓN PRINCIPAL
 // ============================================
