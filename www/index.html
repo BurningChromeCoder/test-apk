@@ -7,69 +7,30 @@
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     
     <style>
-        /* --- ESTILOS BASE --- */
         :root { --primary: #2ecc71; --danger: #e74c3c; --bg: #111; --glass: rgba(255,255,255,0.1); }
         body { background: var(--bg); color: #fff; font-family: -apple-system, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
-        /* CONSOLA MINI (Top Left) */
         #console-log { position: absolute; top: 10px; left: 10px; font-size: 9px; opacity: 0.5; pointer-events: none; z-index: 5; text-shadow: 0 1px 2px #000; max-height: 50px; overflow: hidden; }
-
-        /* INDICADOR DE RED (Top Right) */
-        #network-badge {
-            position: absolute; top: 15px; right: 15px; z-index: 10;
-            padding: 5px 12px; border-radius: 15px; background: rgba(0,0,0,0.6);
-            font-size: 11px; display: flex; align-items: center; gap: 6px;
-            backdrop-filter: blur(5px); border: 1px solid rgba(255,255,255,0.1);
-        }
+        #network-badge { position: absolute; top: 15px; right: 15px; z-index: 10; padding: 5px 12px; border-radius: 15px; background: rgba(0,0,0,0.6); font-size: 11px; display: flex; align-items: center; gap: 6px; backdrop-filter: blur(5px); border: 1px solid rgba(255,255,255,0.1); }
         .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
         .dot.online { background: #2ecc71; box-shadow: 0 0 5px #2ecc71; }
         .dot.offline { background: #e74c3c; }
         .dot.unstable { background: #f1c40f; }
 
-        /* CONTENEDOR PRINCIPAL */
         #main-wrapper { flex-grow: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: filter 0.3s; }
-        #main-wrapper.blur { filter: blur(10px); }
-
-        /* VISUALIZADOR DE ONDAS (CANVAS) */
-        canvas#wave-visualizer {
-            width: 100%; height: 300px;
-            position: absolute; top: 50%; left: 0; transform: translateY(-50%);
-            opacity: 0; transition: opacity 0.5s; z-index: 1;
-        }
+        
+        canvas#wave-visualizer { width: 100%; height: 300px; position: absolute; top: 50%; left: 0; transform: translateY(-50%); opacity: 0; transition: opacity 0.5s; z-index: 1; }
         canvas.active { opacity: 1 !important; }
 
-        /* ESTADO CENTRAL */
         .status-container { z-index: 5; text-align: center; }
         .status-text { font-size: 20px; font-weight: 300; letter-spacing: 1px; color: #ccc; margin-bottom: 20px; }
-        
-        /* AVATAR PULSANTE (Modo Espera) */
-        .avatar-waiting {
-            width: 80px; height: 80px; border-radius: 50%;
-            background: linear-gradient(135deg, #333, #111);
-            border: 1px solid #444; display: flex; align-items: center; justify-content: center;
-            font-size: 30px; margin: 0 auto;
-            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
-        }
+        .avatar-waiting { width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, #333, #111); border: 1px solid #444; display: flex; align-items: center; justify-content: center; font-size: 30px; margin: 0 auto; box-shadow: 0 10px 20px rgba(0,0,0,0.3); }
 
-        /* CONTROLES FLOTANTES */
-        .controls-layer {
-            position: absolute; bottom: 50px; width: 100%;
-            display: flex; justify-content: center; gap: 30px; z-index: 20;
-            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
+        .controls-layer { position: absolute; bottom: 50px; width: 100%; display: flex; justify-content: center; gap: 30px; z-index: 20; transition: transform 0.3s; }
         .controls-layer.hidden { transform: translateY(150px); }
-
-        .btn {
-            width: 70px; height: 70px; border-radius: 50%; border: none;
-            font-size: 28px; cursor: pointer; color: white;
-            display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 10px 20px rgba(0,0,0,0.4);
-            transition: transform 0.2s, filter 0.2s;
-            position: relative; overflow: hidden;
-        }
+        .btn { width: 70px; height: 70px; border-radius: 50%; border: none; font-size: 28px; cursor: pointer; color: white; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 20px rgba(0,0,0,0.4); transition: transform 0.2s; position: relative; overflow: hidden; }
         .btn:active { transform: scale(0.92); }
         
-        /* Tipos de Botones */
         .btn-answer { background: var(--primary); animation: pulse-ring 1.5s infinite; }
         .btn-hangup { background: var(--danger); }
         .btn-mute { background: #f39c12; width: 50px; height: 50px; font-size: 20px; position: absolute; bottom: 20px; right: 30px; }
@@ -77,45 +38,26 @@
         .btn-mute::after { content: ''; position: absolute; width: 100%; height: 2px; background: #fff; transform: rotate(45deg); opacity: 0; }
         .btn-mute.muted::after { opacity: 1; }
 
-        @keyframes pulse-ring {
-            0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7); }
-            70% { box-shadow: 0 0 0 20px rgba(46, 204, 113, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); }
-        }
+        @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7); } 70% { box-shadow: 0 0 0 20px rgba(46, 204, 113, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); } }
 
-        /* ONBOARDING (Pantalla Inicial) */
-        #onboarding {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: #000; z-index: 100; display: flex; flex-direction: column;
-            align-items: center; justify-content: center; text-align: center;
-            padding: 20px; box-sizing: border-box;
-        }
-        .welcome-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; background: linear-gradient(to right, #2ecc71, #3498db); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        #onboarding { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; box-sizing: border-box; }
         .btn-start { padding: 15px 40px; background: white; color: black; border: none; border-radius: 30px; font-weight: bold; font-size: 18px; margin-top: 30px; }
-
     </style>
 </head>
 <body>
 
     <div id="onboarding">
         <div style="font-size: 50px; margin-bottom: 20px;">🚪</div>
-        <div class="welcome-title">Monitor Puerta V3</div>
-        <p style="color: #888; max-width: 300px;">
-            Necesitamos acceso al micrófono y notificaciones para avisarte cuando toquen el timbre.
-        </p>
-        <button class="btn-start" onclick="iniciarApp()">Conceder y Entrar</button>
+        <h1 style="margin:0; font-size:24px;">Monitor Puerta V3</h1>
+        <p style="color:#888;">El micrófono se activará solo al contestar.</p>
+        <button class="btn-start" onclick="iniciarApp()">Entrar</button>
     </div>
 
-    <div id="console-log">Inicializando...</div>
-    
-    <div id="network-badge">
-        <div id="net-dot" class="dot offline"></div>
-        <span id="net-text">Desconectado</span>
-    </div>
+    <div id="console-log">Iniciando...</div>
+    <div id="network-badge"><div id="net-dot" class="dot offline"></div><span id="net-text">Desconectado</span></div>
 
     <div id="main-wrapper">
         <canvas id="wave-visualizer"></canvas>
-        
         <div class="status-container">
             <div id="avatar" class="avatar-waiting">🔒</div>
             <div id="status-text" class="status-text">Esperando conexión...</div>
@@ -135,16 +77,25 @@
 
     <audio id="remoteAudio" autoplay></audio>
 
+    <script>
+        document.addEventListener('deviceready', function () {
+             if(window.cordova && cordova.plugins.backgroundMode) {
+                 cordova.plugins.backgroundMode.enable();
+                 cordova.plugins.backgroundMode.setDefaults({ title: "Monitor Activo", text: "Esperando timbre...", resume: true, hidden: false, bigText: true });
+                 cordova.plugins.backgroundMode.on('activate', () => cordova.plugins.backgroundMode.disableWebViewOptimizations());
+             }
+        }, false);
+    </script>
+
     <script type="module">
         import { PushNotifications } from '@capacitor/push-notifications';
         
-        // --- CONFIGURACIÓN ---
         const MY_ID = "puerta-admin-v2"; 
         const API_URL = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
         
-        // ESTADO GLOBAL
         let peer = null;
         let currentCall = null;
+        let currentDataConn = null; // Canal de datos
         let localStream = null;
         let incomingCallRequest = null;
         let audioContext = null;
@@ -154,167 +105,159 @@
         let isMuted = false;
         let reconnectInterval = null;
 
-        // --- 1. INICIO Y ONBOARDING ---
         window.iniciarApp = async function() {
             try {
-                // AudioContext para Visualizador y Ringtone
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
-                // Pedir micrófono
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                // --- TRUCO: LIBERAR MICRÓFONO ---
+                const streamTemp = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                streamTemp.getTracks().forEach(track => track.stop()); // Lo soltamos
                 
-                // Ocultar onboarding
                 document.getElementById('onboarding').style.opacity = '0';
                 setTimeout(() => document.getElementById('onboarding').remove(), 500);
                 
-                // Iniciar sistemas
-                iniciarFCM();
+                await iniciarFCM(); 
                 iniciarPeer();
                 iniciarVisualizador();
-
-            } catch (e) {
-                alert("Error de permisos: " + e.message);
-            }
+            } catch (e) { alert("Error permisos: " + e.message); }
         };
 
-        // --- 2. GESTIÓN DE RED Y RECONEXIÓN ---
-        function updateNetworkStatus(status) {
-            const dot = document.getElementById('net-dot');
-            const txt = document.getElementById('net-text');
-            dot.className = 'dot ' + status;
-            
-            if (status === 'online') txt.innerText = "En Línea";
-            else if (status === 'offline') txt.innerText = "Desconectado";
-            else if (status === 'unstable') txt.innerText = "Inestable";
+        async function iniciarFCM() {
+            try {
+                let perm = await PushNotifications.checkPermissions();
+                if (perm.receive === 'prompt') perm = await PushNotifications.requestPermissions();
+                if (perm.receive !== 'granted') return;
+
+                await PushNotifications.createChannel({
+                    id: 'timbre_urgente',      
+                    name: 'Timbre de Puerta',
+                    importance: 5,             
+                    visibility: 1,             
+                    vibration: true,
+                    sound: 'beep.wav'          
+                });
+
+                await PushNotifications.register();
+                PushNotifications.addListener('registration', t => registrarEnServidor(t.value));
+            } catch (e) { console.log("FCM Error: " + e.message); }
+        }
+
+        async function registrarEnServidor(token) {
+            fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: token, sala: 'puerta-principal' })
+            }).catch(e => console.log(e));
         }
 
         function iniciarPeer() {
-            log("Iniciando P2P...");
-            if (peer) peer.destroy(); // Asegurar limpieza previa
-
+            if (peer) peer.destroy(); 
             peer = new Peer(MY_ID, {
                 debug: 1,
-                config: {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' }
-                    ]
-                }
+                config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
             });
 
             peer.on('open', (id) => {
-                log("ID Propio: " + id);
                 updateNetworkStatus('online');
                 setStatus("✅ Listo para timbre");
                 if (reconnectInterval) clearInterval(reconnectInterval);
             });
 
-            // --- SOLUCIÓN 3: MANEJO INTELIGENTE DE ERRORES ---
-            peer.on('error', (err) => {
-                log("🔴 Error P2P: " + err.type);
-                updateNetworkStatus('offline');
-                
-                // CASO A: ID DUPLICADO (Tu error actual)
-                if (err.type === 'unavailable-id') {
-                    setStatus("⚠️ ID en uso por otra pestaña");
-                    alert("⚠️ ERROR: ID DUPLICADO\n\nYa tienes la app abierta en otro lugar.\nCierra todas las pestañas y espera 1 minuto.");
-                }
-                
-                // CASO B: PROBLEMAS DE RED (Reconectar)
-                else if (err.type === 'network' || err.type === 'disconnected' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') {
-                    attemptReconnect();
-                }
+            // 1. ESCUCHAR CONEXIÓN DE DATOS (Para colgar)
+            peer.on('connection', (conn) => {
+                currentDataConn = conn;
+                conn.on('data', (data) => {
+                    if (data === 'CORTAR') finalizarLlamada(false); // false = no re-avisar
+                });
+                conn.on('close', () => finalizarLlamada(false));
             });
 
-            peer.on('disconnected', () => {
-                log("Desconectado del servidor");
-                updateNetworkStatus('offline');
-                attemptReconnect();
-            });
-
+            // 2. ESCUCHAR LLAMADA DE AUDIO
             peer.on('call', (call) => {
-                log("🔔 LLAMADA ENTRANTE");
-                manejarLlamadaEntrante(call);
+                incomingCallRequest = call;
+                setStatus("🔔 TIMBRE SONANDO");
+                document.getElementById('avatar').innerText = "🔔";
+                document.getElementById('controls-incoming').classList.remove('hidden');
+                
+                startRinging();
+                if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 1000]);
+                
+                if (callTimeout) clearTimeout(callTimeout);
+                callTimeout = setTimeout(() => rechazarLlamada(), 30000);
             });
+
+            peer.on('error', (err) => {
+                updateNetworkStatus('offline');
+                if (err.type === 'unavailable-id') {
+                    setStatus("⚠️ ID en uso");
+                    alert("Cierra otras pestañas de la app.");
+                } else attemptReconnect();
+            });
+
+            peer.on('disconnected', () => { updateNetworkStatus('offline'); attemptReconnect(); });
         }
 
         function attemptReconnect() {
             if (reconnectInterval) return;
             setStatus("📡 Reconectando...");
             reconnectInterval = setInterval(() => {
-                if (peer && !peer.destroyed) {
-                    peer.reconnect();
-                } else {
-                    iniciarPeer();
-                }
+                if (peer && !peer.destroyed) peer.reconnect(); else iniciarPeer();
             }, 5000);
         }
 
-        // --- 3. FLUJO DE LLAMADA ---
-        function manejarLlamadaEntrante(call) {
-            incomingCallRequest = call;
-            setStatus("🔔 ALGUIEN TOCA EL TIMBRE");
-            document.getElementById('avatar').innerText = "🔔";
-            document.getElementById('controls-incoming').classList.remove('hidden');
-            
-            startRinging();
-            if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 1000]);
-            
-            if (callTimeout) clearTimeout(callTimeout);
-            callTimeout = setTimeout(() => {
-                log("⏰ Timeout de llamada");
-                rechazarLlamada();
-            }, 30000);
-        }
-
-        window.contestarLlamada = function() {
+        window.contestarLlamada = async function() {
             if (!incomingCallRequest) return;
             stopRinging();
             if (callTimeout) clearTimeout(callTimeout);
             
-            document.getElementById('controls-incoming').classList.add('hidden');
-            document.getElementById('controls-active').classList.remove('hidden');
-            document.getElementById('btn-mute').style.display = 'flex'; 
-            setStatus("🟢 CONECTADO");
-            document.getElementById('avatar').innerText = "🔊";
-            
-            currentCall = incomingCallRequest;
-            currentCall.answer(localStream);
-            
-            currentCall.on('stream', (remoteStream) => {
-                const audioEl = document.getElementById('remoteAudio');
-                audioEl.srcObject = remoteStream;
-                audioEl.play().catch(e => console.log(e));
-                conectarVisualizador(remoteStream);
-            });
-            
-            currentCall.on('close', () => resetState());
-            
-            currentCall.peerConnection.oniceconnectionstatechange = () => {
-                const state = currentCall.peerConnection.iceConnectionState;
-                if(state === 'disconnected' || state === 'failed') updateNetworkStatus('unstable');
-                if(state === 'connected') updateNetworkStatus('online');
-            };
+            try {
+                // AHORA PEDIMOS EL MICRÓFONO REAL
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                
+                document.getElementById('controls-incoming').classList.add('hidden');
+                document.getElementById('controls-active').classList.remove('hidden');
+                document.getElementById('btn-mute').style.display = 'flex'; 
+                setStatus("🟢 CONECTADO");
+                document.getElementById('avatar').innerText = "🔊";
+                
+                currentCall = incomingCallRequest;
+                currentCall.answer(localStream);
+                
+                currentCall.on('stream', (remoteStream) => {
+                    document.getElementById('remoteAudio').srcObject = remoteStream;
+                    conectarVisualizador(remoteStream);
+                });
+                currentCall.on('close', () => finalizarLlamada(false));
+
+            } catch (err) { alert("Error mic: " + err.message); rechazarLlamada(); }
         };
 
         window.rechazarLlamada = function() {
             if (incomingCallRequest) incomingCallRequest.close();
-            stopRinging();
             resetState();
         };
 
-        window.finalizarLlamada = function() {
+        window.finalizarLlamada = function(enviarAviso = true) {
+            // AVISAR AL OTRO LADO
+            if (enviarAviso && currentDataConn && currentDataConn.open) {
+                currentDataConn.send('CORTAR');
+            }
             if (currentCall) currentCall.close();
+            if (currentDataConn) currentDataConn.close();
             resetState();
         };
 
         function resetState() {
-            log("Estado reiniciado");
             stopRinging();
             if (callTimeout) clearTimeout(callTimeout);
             
-            currentCall = null;
-            incomingCallRequest = null;
+            // SOLTAR MICRÓFONO
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+
+            currentCall = null; incomingCallRequest = null; currentDataConn = null;
             
             document.getElementById('controls-incoming').classList.add('hidden');
             document.getElementById('controls-active').classList.add('hidden');
@@ -326,30 +269,21 @@
             updateNetworkStatus('online');
         }
 
-        // --- 4. EXTRAS ---
+        // --- EXTRAS (Visualizador, Ringtone, etc) ---
         function startRinging() {
             if (!audioContext) return;
             ringtoneOscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
+            const gain = audioContext.createGain();
             ringtoneOscillator.type = 'square';
             ringtoneOscillator.frequency.setValueAtTime(800, audioContext.currentTime);
             ringtoneOscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.1);
-            
-            const lfo = audioContext.createOscillator();
-            lfo.type = 'square';
-            lfo.frequency.value = 4;
-            
-            ringtoneOscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-            gainNode.gain.value = 0.1;
-            ringtoneOscillator.start();
+            const lfo = audioContext.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 4;
+            ringtoneOscillator.connect(gain); gain.connect(audioContext.destination);
+            gain.gain.value = 0.1; ringtoneOscillator.start();
         }
 
         function stopRinging() {
-            if (ringtoneOscillator) {
-                try { ringtoneOscillator.stop(); } catch(e){}
-                ringtoneOscillator = null;
-            }
+            if (ringtoneOscillator) { try { ringtoneOscillator.stop(); } catch(e){} ringtoneOscillator = null; }
             if (navigator.vibrate) navigator.vibrate(0);
         }
 
@@ -358,46 +292,27 @@
             const track = localStream.getAudioTracks()[0];
             isMuted = !isMuted;
             track.enabled = !isMuted;
-            
-            const btn = document.getElementById('btn-mute');
-            if (isMuted) btn.classList.add('muted');
-            else btn.classList.remove('muted');
+            document.getElementById('btn-mute').classList.toggle('muted', isMuted);
         };
 
         function iniciarVisualizador() {
             const canvas = document.getElementById('wave-visualizer');
             const ctx = canvas.getContext('2d');
-            canvas.width = window.innerWidth;
-            canvas.height = 300;
-            
+            canvas.width = window.innerWidth; canvas.height = 300;
             window.drawWave = function() {
                 requestAnimationFrame(window.drawWave);
                 if (!analyser) return;
-
-                const bufferLength = analyser.frequencyBinCount;
-                const dataArray = new Uint8Array(bufferLength);
+                const bufferLength = analyser.frequencyBinCount; const dataArray = new Uint8Array(bufferLength);
                 analyser.getByteTimeDomainData(dataArray);
-
-                ctx.fillStyle = 'rgba(17, 17, 17, 0.2)'; 
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.lineWidth = 2;
-                ctx.strokeStyle = '#2ecc71';
-                ctx.beginPath();
-
-                const sliceWidth = canvas.width * 1.0 / bufferLength;
-                let x = 0;
-
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.lineWidth = 2; ctx.strokeStyle = '#2ecc71'; ctx.beginPath();
+                const sliceWidth = canvas.width * 1.0 / bufferLength; let x = 0;
                 for (let i = 0; i < bufferLength; i++) {
-                    const v = dataArray[i] / 128.0;
-                    const y = v * (canvas.height / 2);
-                    if (i === 0) ctx.moveTo(x, y);
-                    else ctx.lineTo(x, y);
-                    x += sliceWidth;
+                    const v = dataArray[i] / 128.0; const y = v * (canvas.height / 2);
+                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); x += sliceWidth;
                 }
-                ctx.lineTo(canvas.width, canvas.height / 2);
-                ctx.stroke();
-            };
-            window.drawWave();
+                ctx.lineTo(canvas.width, canvas.height / 2); ctx.stroke();
+            }; window.drawWave();
         }
 
         function conectarVisualizador(stream) {
@@ -409,39 +324,12 @@
             document.getElementById('wave-visualizer').classList.add('active');
         }
 
-        // --- 5. HERRAMIENTAS Y LIMPIEZA ---
         function setStatus(msg) { document.getElementById('status-text').innerText = msg; }
-        function log(msg) { 
-            console.log(msg);
-            const el = document.getElementById('console-log');
-            el.innerHTML = `> ${msg}<br>` + el.innerHTML;
-        }
-
-        // SOLUCIÓN 2: LIMPIEZA AUTOMÁTICA AL CERRAR/RECARGAR
-        window.addEventListener('beforeunload', () => {
-            if (peer) {
-                log("Destruyendo sesión Peer...");
-                peer.destroy();
-            }
-        });
-
-        // NOTIFICACIONES
-        async function iniciarFCM() {
-            try {
-                let perm = await PushNotifications.checkPermissions();
-                if (perm.receive === 'prompt') perm = await PushNotifications.requestPermissions();
-                if (perm.receive !== 'granted') return;
-                await PushNotifications.register();
-                PushNotifications.addListener('registration', t => registrarEnServidor(t.value));
-            } catch (e) { console.log("FCM no disponible en web mode"); }
-        }
-
-        async function registrarEnServidor(token) {
-            fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: token, sala: 'puerta-principal' })
-            }).catch(e => log("API Error"));
+        function updateNetworkStatus(status) {
+            const dot = document.getElementById('net-dot');
+            const txt = document.getElementById('net-text');
+            dot.className = 'dot ' + status;
+            txt.innerText = status === 'online' ? 'En Línea' : (status === 'offline' ? 'Desconectado' : 'Inestable');
         }
     </script>
 </body>
