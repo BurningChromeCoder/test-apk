@@ -5,16 +5,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Monitor Puerta Pro</title>
     
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <!-- 🔥 FIREBASE PRIMERO (Global) -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     
+    <!-- Tu módulo DESPUÉS -->
     <script type="module" src="app.js"></script>
     
     <style>
         :root { --primary: #2ecc71; --danger: #e74c3c; --bg: #111; }
         body { background: var(--bg); color: #fff; font-family: -apple-system, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
-        #console-log { position: absolute; top: 10px; left: 10px; font-size: 8px; opacity: 0.7; z-index: 5; background: rgba(0,0,0,0.7); padding: 8px; border-radius: 3px; max-width: 85%; max-height: 150px; overflow: auto; font-family: monospace; }
-        #network-badge { position: absolute; top: 15px; right: 15px; z-index: 10; padding: 5px 12px; border-radius: 15px; background: rgba(0,0,0,0.6); font-size: 11px; display: flex; align-items: center; gap: 6px; }
+        /* 🔥 CONSOLA MÁS VISIBLE */
+        #console-log { 
+            position: absolute; 
+            top: 10px; 
+            left: 10px; 
+            right: 10px;
+            font-size: 10px; 
+            z-index: 5; 
+            background: rgba(0,0,0,0.95); 
+            padding: 10px; 
+            border-radius: 5px; 
+            max-height: 200px; 
+            overflow: auto; 
+            font-family: monospace;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+        }
+        
+        #network-badge { position: absolute; top: 220px; right: 15px; z-index: 10; padding: 5px 12px; border-radius: 15px; background: rgba(0,0,0,0.6); font-size: 11px; display: flex; align-items: center; gap: 6px; }
         .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
         .dot.online { background: #2ecc71; box-shadow: 0 0 5px #2ecc71; animation: pulse-dot 2s infinite; }
         .dot.offline { background: #e74c3c; }
@@ -39,27 +59,25 @@
         .btn-hangup { background: var(--danger); }
         .btn-mute { background: #f39c12; width: 50px; height: 50px; font-size: 20px; position: absolute; bottom: 20px; right: 30px; }
         .btn-mute.muted { background: #e74c3c; }
+        .btn-mute.hidden { display: none; }
 
         @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7); } 70% { box-shadow: 0 0 0 20px rgba(46, 204, 113, 0); } 100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); } }
 
-        #onboarding { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
+        #onboarding { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; transition: opacity 0.5s; }
         .btn-start { padding: 15px 40px; background: white; color: black; border: none; border-radius: 30px; font-weight: bold; font-size: 18px; margin-top: 30px; cursor: pointer; }
-        
-        #keepalive-status { position: absolute; bottom: 10px; left: 10px; font-size: 10px; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 10px; }
     </style>
 </head>
 <body>
 
     <div id="onboarding">
         <div style="font-size: 50px; margin-bottom: 20px;">🚪</div>
-        <h1 style="margin:0; font-size:24px;">Monitor Puerta V4</h1>
-        <p style="color:#888; font-size:14px;">Sistema anti-delay con keepalive</p>
+        <h1 style="margin:0; font-size:24px;">Monitor Puerta V7.1</h1>
+        <p style="color:#888; font-size:14px;">Modo Debug con logs visibles</p>
         <button class="btn-start" onclick="iniciarApp()">Entrar</button>
     </div>
 
-    <div id="console-log">Iniciando sistema...</div>
+    <div id="console-log">📄 Cargando sistema...</div>
     <div id="network-badge"><div id="net-dot" class="dot offline"></div><span id="net-text">Desconectado</span></div>
-    <div id="keepalive-status">⏱️ Keepalive: <span id="keepalive-count">0</span></div>
 
     <div id="main-wrapper">
         <canvas id="wave-visualizer"></canvas>
@@ -77,10 +95,19 @@
             <button class="btn btn-hangup" onclick="finalizarLlamada()">🔴</button>
         </div>
         
-        <button id="btn-mute" class="btn btn-mute hidden" onclick="toggleMute()" style="display:none;">🎤</button>
+        <button id="btn-mute" class="btn btn-mute hidden" onclick="toggleMute()">🎤</button>
     </div>
 
     <audio id="remoteAudio" autoplay></audio>
+
+    <script>
+        // Verificar que Firebase se cargó
+        if (typeof firebase === 'undefined') {
+            document.getElementById('console-log').innerHTML = '❌ ERROR CRÍTICO: Firebase no se cargó<br>Verifica tu conexión a internet';
+        } else {
+            document.getElementById('console-log').innerHTML = '✅ Firebase cargado<br>📄 Esperando app.js...';
+        }
+    </script>
 
 </body>
 </html>
