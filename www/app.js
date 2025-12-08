@@ -236,6 +236,42 @@ async function registrarEnServidor(token) {
         log('❌ Error registro token: ' + e.message);
     }
 }
+
+// ============================================
+// CONFIGURACIÓN BACKGROUND MODE (AGREGAR ESTO)
+// ============================================
+document.addEventListener('deviceready', () => {
+    // Verificamos si el plugin existe
+    if (window.cordova && window.cordova.plugins && window.cordova.plugins.backgroundMode) {
+        log('🔋 Detectado plugin Background Mode');
+        
+        // 1. Habilitar el modo
+        window.cordova.plugins.backgroundMode.enable();
+        
+        // 2. Configuración de la notificación persistente
+        window.cordova.plugins.backgroundMode.setDefaults({
+            title: "Monitor Puerta Activo",
+            text: "Sistema P2P en línea y esperando llamadas",
+            icon: 'icon', // Usa el nombre de tu icono en res/drawable sin extensión
+            color: '#2ecc71', // Color verde de tu app
+            resume: true,
+            hidden: false,
+            bigText: true
+        });
+
+        // 3. Desactivar optimizaciones cuando se active el modo
+        window.cordova.plugins.backgroundMode.on('activate', () => {
+            window.cordova.plugins.backgroundMode.disableWebViewOptimizations(); 
+            log('🔋 Background Mode ACTIVADO: Optimizaciones Webview deshabilitadas');
+            
+            // Opcional: Forzar reconexión si es necesario
+            if (peer && peer.disconnected) peer.reconnect();
+        });
+        
+    } else {
+        log('⚠️ Cordova/Background plugin no detectado (¿Estás en web?)');
+    }
+}, false);
 // ============================================
 // PEERJS CON RECONEXIÓN INTELIGENTE
 // ============================================
