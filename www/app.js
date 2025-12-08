@@ -1,25 +1,71 @@
-import { connect } from 'twilio-video';
-import { PushNotifications } from '@capacitor/push-notifications';
+// ============================================
+// CAPTURA DE ERRORES GLOBAL
+// ============================================
+window.addEventListener('error', function(e) {
+    const errorDiv = document.getElementById('console-log');
+    if (errorDiv) {
+        errorDiv.innerHTML = `<div style="color:red;">❌ ERROR: ${e.message}<br>Archivo: ${e.filename}<br>Línea: ${e.lineno}</div>` + errorDiv.innerHTML;
+    }
+    console.error('ERROR CAPTURADO:', e);
+    alert('ERROR: ' + e.message + '\nVer consola en pantalla');
+});
+
+window.addEventListener('unhandledrejection', function(e) {
+    const errorDiv = document.getElementById('console-log');
+    if (errorDiv) {
+        errorDiv.innerHTML = `<div style="color:orange;">⚠️ PROMISE ERROR: ${e.reason}</div>` + errorDiv.innerHTML;
+    }
+    console.error('PROMISE ERROR:', e);
+});
 
 // ============================================
-// CONFIGURACIÓN FIREBASE (Modo Compat - Compatible con tu setup actual)
+// IMPORTACIONES CON TRY-CATCH
 // ============================================
-import firebase from 'firebase/compat/app';
-import 'firebase/compat/firestore';
+let connect, PushNotifications;
 
-const firebaseConfig = {
-    apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
-    authDomain: "puerta-c3a71.firebaseapp.com",
-    projectId: "puerta-c3a71",
-    storageBucket: "puerta-c3a71.firebasestorage.app",
-    messagingSenderId: "830550601352",
-    appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
-};
-
-if (!firebase.apps.length) {
-    firebase.initializeApp(firebaseConfig);
+try {
+    const twilioModule = await import('twilio-video');
+    connect = twilioModule.connect;
+    console.log('✅ Twilio cargado');
+} catch (e) {
+    alert('Error cargando Twilio: ' + e.message);
 }
-const db = firebase.firestore();
+
+try {
+    const capacitorModule = await import('@capacitor/push-notifications');
+    PushNotifications = capacitorModule.PushNotifications;
+    console.log('✅ Capacitor cargado');
+} catch (e) {
+    console.log('⚠️ Capacitor no disponible (normal en web)');
+}
+
+// ============================================
+// FIREBASE CON TRY-CATCH
+// ============================================
+let db;
+try {
+    // Verificar si firebase ya está cargado globalmente
+    if (typeof firebase !== 'undefined') {
+        console.log('✅ Firebase global detectado');
+        if (!firebase.apps.length) {
+            firebase.initializeApp({
+                apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
+                authDomain: "puerta-c3a71.firebaseapp.com",
+                projectId: "puerta-c3a71",
+                storageBucket: "puerta-c3a71.firebasestorage.app",
+                messagingSenderId: "830550601352",
+                appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
+            });
+        }
+        db = firebase.firestore();
+        console.log('✅ Firebase inicializado');
+    } else {
+        throw new Error('Firebase no está disponible globalmente');
+    }
+} catch (e) {
+    alert('ERROR FIREBASE: ' + e.message);
+    console.error('Firebase error:', e);
+}
 
 // ============================================
 // CONFIGURACIÓN
@@ -39,7 +85,7 @@ let wakeLock = null;
 let firestoreUnsubscribe = null;
 
 // ============================================
-// LOGS
+// LOGS VISIBLES
 // ============================================
 function log(msg) {
     const logDiv = document.getElementById('console-log');
@@ -54,7 +100,7 @@ function log(msg) {
 document.addEventListener('resume', () => {
     log('☀️ APP EN PRIMER PLANO');
     requestWakeLock();
-    if(window.Capacitor) PushNotifications.removeAllDeliveredNotifications();
+    if(window.Capacitor && PushNotifications) PushNotifications.removeAllDeliveredNotifications();
 }, false);
 
 // ============================================
@@ -65,8 +111,11 @@ async function requestWakeLock() {
     try {
         if ('wakeLock' in navigator) {
             wakeLock = await navigator.wakeLock.request('screen');
+            log('🔒 Wake Lock activado');
         }
-    } catch (err) {}
+    } catch (err) {
+        log('⚠️ Wake Lock no disponible');
+    }
 }
 
 document.addEventListener('visibilitychange', async () => {
@@ -80,88 +129,117 @@ document.addEventListener('visibilitychange', async () => {
 // ============================================
 window.iniciarApp = async function() {
     try {
-        log('🚀 INICIANDO V7.0 (Firebase Directo)...');
+        log('🚀 INICIANDO V7.1 DEBUG...');
         
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        // Verificar elementos del DOM
+        const requiredElements = ['console-log', 'status-text', 'avatar', 'controls-incoming', 'controls-active'];
+        for (const id of requiredElements) {
+            if (!document.getElementById(id)) {
+                throw new Error(`Elemento ${id} no encontrado en el DOM`);
+            }
+        }
+        log('✅ DOM verificado');
         
+        // Audio Context
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            log('✅ Audio Context creado');
+        } catch (e) {
+            log('⚠️ Audio Context error: ' + e.message);
+        }
+        
+        // Remover onboarding
         const onboarding = document.getElementById('onboarding');
         if(onboarding) {
             onboarding.style.opacity = '0';
             setTimeout(() => onboarding.remove(), 500);
+            log('✅ Onboarding removido');
         }
         
         await requestWakeLock();
-        await iniciarCapacitor();
+        
+        if (window.Capacitor) {
+            log('📱 Modo Capacitor detectado');
+            await iniciarCapacitor();
+        } else {
+            log('🌐 Modo Web detectado');
+        }
+        
         iniciarVisualizador();
         activarModoSegundoPlano();
 
-        // 🔥 NUEVO: ESCUCHA DIRECTA DE FIREBASE
-        iniciarEscuchaFirebase();
-        
-        // 🔥 NUEVO: LIMPIEZA AUTOMÁTICA
-        iniciarLimpiezaAutomatica();
+        // Firebase
+        if (db) {
+            log('🔥 Iniciando Firebase listener...');
+            iniciarEscuchaFirebase();
+            iniciarLimpiezaAutomatica();
+        } else {
+            throw new Error('Firebase no está disponible');
+        }
 
         setStatus("✅ Listo para recibir llamadas");
         updateNetworkStatus('online');
+        log('✅ APP LISTA');
         
     } catch (e) { 
-        log('❌ ERROR: ' + e.message);
-        alert("Error: " + e.message); 
+        log('❌ ERROR CRÍTICO: ' + e.message);
+        alert("Error inicialización: " + e.message);
+        console.error(e);
     }
 };
 
 // ============================================
-// 🔥 ESCUCHA DIRECTA FIREBASE (COMPAT MODE)
+// FIREBASE LISTENER
 // ============================================
 function iniciarEscuchaFirebase() {
-    log('👂 Iniciando escucha DIRECTA de Firebase...');
-    
-    if (firestoreUnsubscribe) {
-        firestoreUnsubscribe();
-    }
-    
-    // Query usando sintaxis compat
-    const query = db.collection('llamadas')
-        .where('sala', '==', ROOM_NAME);
-    
-    firestoreUnsubscribe = query.onSnapshot((snapshot) => {
-        log(`🔔 Firebase: ${snapshot.size} llamada(s) en total`);
+    try {
+        log('👂 Configurando listener Firebase...');
         
-        snapshot.docChanges().forEach((change) => {
-            if (change.type === 'added' || change.type === 'modified') {
-                const data = change.doc.data();
-                const id = change.doc.id;
-                
-                // Filtro: Solo procesamos "pendiente" o "llamando"
-                if (data.estado !== 'pendiente' && data.estado !== 'llamando') {
-                    return;
+        if (firestoreUnsubscribe) {
+            firestoreUnsubscribe();
+        }
+        
+        const query = db.collection('llamadas').where('sala', '==', ROOM_NAME);
+        
+        firestoreUnsubscribe = query.onSnapshot((snapshot) => {
+            log(`🔔 Firebase: ${snapshot.size} llamada(s)`);
+            
+            snapshot.docChanges().forEach((change) => {
+                if (change.type === 'added' || change.type === 'modified') {
+                    const data = change.doc.data();
+                    const id = change.doc.id;
+                    
+                    if (data.estado !== 'pendiente' && data.estado !== 'llamando') {
+                        return;
+                    }
+                    
+                    log(`🚨 LLAMADA: ${id} (${data.estado})`);
+                    
+                    if (!activeRoom && !ringtoneOscillator) {
+                        currentLlamadaId = id;
+                        startRinging();
+                        setStatus("🔔 TIMBRE SONANDO");
+                        document.getElementById('avatar').innerText = "🔔";
+                        document.getElementById('controls-incoming').classList.remove('hidden');
+                        traerAlFrente();
+                    }
                 }
-                
-                log(`🚨 ¡LLAMADA DETECTADA! ID: ${id} (Estado: ${data.estado})`);
-                
-                // Solo procesar si no estamos ya en llamada
-                if (!activeRoom && !ringtoneOscillator) {
-                    currentLlamadaId = id;
-                    startRinging();
-                    setStatus("🔔 TIMBRE SONANDO");
-                    document.getElementById('avatar').innerText = "🔔";
-                    document.getElementById('controls-incoming').classList.remove('hidden');
-                    traerAlFrente();
-                }
-            }
+            });
+        }, (error) => {
+            log('❌ Error Firebase listener: ' + error.message);
         });
-    }, (error) => {
-        log('❌ Error escuchando Firebase: ' + error.message);
-    });
-    
-    log('✅ Listener de Firebase activo');
+        
+        log('✅ Listener Firebase activo');
+    } catch (e) {
+        log('❌ Error configurando listener: ' + e.message);
+    }
 }
 
 // ============================================
-// 🔥 LIMPIEZA AUTOMÁTICA
+// LIMPIEZA
 // ============================================
 function iniciarLimpiezaAutomatica() {
-    log('🧹 Iniciando sistema de limpieza automática...');
+    log('🧹 Sistema limpieza activado');
     setTimeout(limpiarLlamadasViejas, 5000);
     setInterval(limpiarLlamadasViejas, 10 * 60 * 1000);
 }
@@ -177,23 +255,17 @@ async function limpiarLlamadasViejas() {
             .get();
         
         if (snapshot.empty) {
-            log('✅ BD limpia (no hay llamadas viejas)');
+            log('✅ BD limpia');
             return;
         }
         
         const batch = db.batch();
-        let count = 0;
-        
-        snapshot.forEach((doc) => {
-            batch.delete(doc.ref);
-            count++;
-        });
-        
+        snapshot.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
-        log(`🗑️ ${count} llamada(s) antigua(s) eliminada(s)`);
         
+        log(`🗑️ ${snapshot.size} llamada(s) eliminada(s)`);
     } catch (error) {
-        log('⚠️ Error en limpieza: ' + error.message);
+        log('⚠️ Error limpieza: ' + error.message);
     }
 }
 
@@ -205,22 +277,7 @@ function activarModoSegundoPlano() {
         if (window.cordova && window.cordova.plugins && window.cordova.plugins.backgroundMode) {
             const bg = window.cordova.plugins.backgroundMode;
             bg.enable();
-            bg.setDefaults({
-                title: "Monitor Puerta",
-                text: "Activo",
-                color: '#2ecc71',
-                hidden: false,
-                bigText: true,
-                resume: true,
-                silent: false
-            });
-            bg.on('activate', () => {
-                bg.disableWebViewOptimizations(); 
-            });
-            if (bg.isScreenOff && bg.isScreenOff()) {
-                bg.wakeUp();
-                bg.unlock();
-            }
+            log('✅ Background mode activado');
         }
     }, false);
 }
@@ -229,12 +286,20 @@ function activarModoSegundoPlano() {
 // NOTIFICACIONES
 // ============================================
 async function iniciarCapacitor() {
-    if (!window.Capacitor) return;
+    if (!PushNotifications) {
+        log('⚠️ PushNotifications no disponible');
+        return;
+    }
     
     try {
         let perm = await PushNotifications.checkPermissions();
-        if (perm.receive === 'prompt') perm = await PushNotifications.requestPermissions();
-        if (perm.receive !== 'granted') return;
+        if (perm.receive === 'prompt') {
+            perm = await PushNotifications.requestPermissions();
+        }
+        if (perm.receive !== 'granted') {
+            log('⚠️ Permisos push denegados');
+            return;
+        }
 
         await PushNotifications.createChannel({
             id: 'timbre_urgente',       
@@ -246,32 +311,28 @@ async function iniciarCapacitor() {
         });
 
         await PushNotifications.register();
+        log('✅ Push notifications registradas');
 
         PushNotifications.addListener('registration', async (token) => {
-            log('📲 Token OK');
+            log('📲 Token: ' + token.value.substring(0, 20) + '...');
             await registrarEnServidor(token.value);
         });
 
         PushNotifications.addListener('pushNotificationReceived', (notification) => {
-            log('🔔 NOTIFICACIÓN PUSH (Backup)');
+            log('🔔 Push recibida');
             traerAlFrente();
         });
 
-        PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
-            log('👆 Acción Notificación');
-            traerAlFrente();
-        });
-
-    } catch (e) { log('⚠️ Error Push: ' + e.message); }
+    } catch (e) { 
+        log('❌ Error Push: ' + e.message); 
+    }
 }
 
 function traerAlFrente() {
     if (window.cordova && window.cordova.plugins && window.cordova.plugins.backgroundMode) {
-        const bg = window.cordova.plugins.backgroundMode;
-        bg.wakeUp();
-        bg.unlock();
-        bg.moveToForeground();
-        window.focus();
+        window.cordova.plugins.backgroundMode.wakeUp();
+        window.cordova.plugins.backgroundMode.unlock();
+        window.cordova.plugins.backgroundMode.moveToForeground();
     }
 }
 
@@ -280,45 +341,46 @@ async function registrarEnServidor(token) {
         await fetch(API_URL_REGISTRO, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: token, sala: ROOM_NAME })
+            body: JSON.stringify({ token, sala: ROOM_NAME })
         });
-    } catch (e) {}
+        log('✅ Token registrado');
+    } catch (e) {
+        log('⚠️ Error registro token');
+    }
 }
 
 // ============================================
 // CONTESTAR
 // ============================================
 window.contestarLlamada = async function() {
-    log('📞 CONECTANDO...');
+    log('📞 Contestando...');
     stopRinging();
 
     try {
-        // Actualizar estado a "aceptada"
         if (currentLlamadaId) {
-            log('📝 Actualizando estado...');
             await db.collection('llamadas').doc(currentLlamadaId).update({
                 estado: 'aceptada'
             });
+            log('✅ Estado actualizado');
         }
 
-        // Obtener token
         const res = await fetch(API_URL_TOKEN, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ identidad: 'Admin-' + Date.now(), sala: ROOM_NAME })
         });
         
-        if(!res.ok) throw new Error('Error token');
+        if(!res.ok) throw new Error('Error token: ' + res.status);
         const data = await res.json();
+        log('✅ Token obtenido');
 
-        // Conectar Twilio
         activeRoom = await connect(data.token, {
             name: ROOM_NAME,
             audio: { echoCancellation: true, autoGainControl: true },
             video: false 
         });
 
-        log(`✅ EN LLAMADA`);
+        log('✅ Twilio conectado');
         
         document.getElementById('controls-incoming').classList.add('hidden');
         document.getElementById('controls-active').classList.remove('hidden');
@@ -331,13 +393,14 @@ window.contestarLlamada = async function() {
         activeRoom.on('disconnected', () => finalizarLlamada(false));
 
     } catch (err) {
-        log('❌ Error: ' + err.message);
+        log('❌ Error contestar: ' + err.message);
+        alert('Error: ' + err.message);
         rechazarLlamada();
     }
 };
 
 function participantConnected(participant) {
-    log(`👤 Visitante: ${participant.identity}`);
+    log(`👤 Participante: ${participant.identity}`);
     participant.on('trackSubscribed', track => {
         document.getElementById('remoteAudio').srcObject = new MediaStream([track.mediaStreamTrack]);
         conectarVisualizador(new MediaStream([track.mediaStreamTrack]));
@@ -350,14 +413,14 @@ window.rechazarLlamada = async function() {
     if (currentLlamadaId) {
         try {
             await db.collection('llamadas').doc(currentLlamadaId).delete();
-            log('🗑️ Llamada rechazada eliminada');
+            log('🗑️ Llamada eliminada');
         } catch (error) {
             log('⚠️ Error eliminando: ' + error.message);
         }
     }
     
     resetState();
-    if(window.Capacitor) PushNotifications.removeAllDeliveredNotifications();
+    if(window.Capacitor && PushNotifications) PushNotifications.removeAllDeliveredNotifications();
     log('❌ Rechazada');
 };
 
@@ -370,9 +433,9 @@ window.finalizarLlamada = async function(disconnect = true) {
     if (currentLlamadaId) {
         try {
             await db.collection('llamadas').doc(currentLlamadaId).delete();
-            log('🗑️ Llamada finalizada eliminada');
+            log('🗑️ Llamada finalizada');
         } catch (error) {
-            log('⚠️ Error eliminando: ' + error.message);
+            log('⚠️ Error: ' + error.message);
         }
     }
     
@@ -391,10 +454,13 @@ function resetState() {
 }
 
 // ============================================
-// AUDIO Y VISUALIZADOR
+// AUDIO
 // ============================================
 function startRinging() {
-    if (!audioContext) return;
+    if (!audioContext) {
+        log('⚠️ No hay AudioContext');
+        return;
+    }
     try {
         if(audioContext.state === 'suspended') audioContext.resume();
         stopRinging(); 
@@ -406,7 +472,7 @@ function startRinging() {
         gain.connect(audioContext.destination);
         gain.gain.value = 0.3;
         ringtoneOscillator.start();
-        log('🔔 SONIDO DE TIMBRE ACTIVADO');
+        log('🔔 Timbre activado');
     } catch (e) {
         log('❌ Error timbre: ' + e.message);
     }
@@ -429,6 +495,7 @@ window.toggleMute = function() {
         if(isMuted) pub.track.disable(); else pub.track.enable();
     });
     document.getElementById('btn-mute').classList.toggle('muted', isMuted);
+    log(isMuted ? '🔇 Mute ON' : '🔊 Mute OFF');
 };
 
 function setStatus(msg) { 
@@ -483,5 +550,9 @@ function conectarVisualizador(stream) {
         source.connect(window.analyserNode);
         const waveVis = document.getElementById('wave-visualizer');
         if(waveVis) waveVis.classList.add('active');
-    } catch (e) {}
+    } catch (e) {
+        log('⚠️ Error visualizador: ' + e.message);
+    }
 }
+
+log('📄 app.js cargado completamente');
