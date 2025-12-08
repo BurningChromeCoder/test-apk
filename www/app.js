@@ -1,11 +1,12 @@
 import { connect } from 'twilio-video';
 import { PushNotifications } from '@capacitor/push-notifications';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, onSnapshot, query, where, doc, updateDoc, deleteDoc, getDocs, writeBatch } from 'firebase/firestore';
 
 // ============================================
-// CONFIGURACIÓN FIREBASE (DIRECTO - SIN API)
+// CONFIGURACIÓN FIREBASE (Modo Compat - Compatible con tu setup actual)
 // ============================================
+import firebase from 'firebase/compat/app';
+import 'firebase/compat/firestore';
+
 const firebaseConfig = {
     apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
     authDomain: "puerta-c3a71.firebaseapp.com",
@@ -15,8 +16,10 @@ const firebaseConfig = {
     appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
 };
 
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
+if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+}
+const db = firebase.firestore();
 
 // ============================================
 // CONFIGURACIÓN
@@ -33,7 +36,7 @@ let audioContext = null;
 let ringtoneOscillator = null; 
 let isMuted = false;
 let wakeLock = null;
-let firestoreUnsubscribe = null; // 🔥 NUEVO: Listener de Firebase
+let firestoreUnsubscribe = null;
 
 // ============================================
 // LOGS
@@ -92,7 +95,7 @@ window.iniciarApp = async function() {
         iniciarVisualizador();
         activarModoSegundoPlano();
 
-        // 🔥 NUEVO: ESCUCHA DIRECTA DE FIREBASE (Como el POC)
+        // 🔥 NUEVO: ESCUCHA DIRECTA DE FIREBASE
         iniciarEscuchaFirebase();
         
         // 🔥 NUEVO: LIMPIEZA AUTOMÁTICA
@@ -108,25 +111,20 @@ window.iniciarApp = async function() {
 };
 
 // ============================================
-// 🔥 NUEVA FUNCIÓN: ESCUCHA DIRECTA FIREBASE
+// 🔥 ESCUCHA DIRECTA FIREBASE (COMPAT MODE)
 // ============================================
 function iniciarEscuchaFirebase() {
     log('👂 Iniciando escucha DIRECTA de Firebase...');
     
-    // Desuscribir listener anterior si existe
     if (firestoreUnsubscribe) {
         firestoreUnsubscribe();
     }
     
-    // Consulta: Llamadas de nuestra sala con estado "pendiente" O "llamando"
-    const q = query(
-        collection(db, 'llamadas'),
-        where('sala', '==', ROOM_NAME)
-        // 🔥 NO filtramos por estado aquí, lo hacemos manualmente
-    );
+    // Query usando sintaxis compat
+    const query = db.collection('llamadas')
+        .where('sala', '==', ROOM_NAME);
     
-    // Escuchar cambios en tiempo real
-    firestoreUnsubscribe = onSnapshot(q, (snapshot) => {
+    firestoreUnsubscribe = query.onSnapshot((snapshot) => {
         log(`🔔 Firebase: ${snapshot.size} llamada(s) en total`);
         
         snapshot.docChanges().forEach((change) => {
@@ -134,9 +132,9 @@ function iniciarEscuchaFirebase() {
                 const data = change.doc.data();
                 const id = change.doc.id;
                 
-                // 🔥 FILTRO MANUAL: Solo procesamos "pendiente" o "llamando"
+                // Filtro: Solo procesamos "pendiente" o "llamando"
                 if (data.estado !== 'pendiente' && data.estado !== 'llamando') {
-                    return; // Ignorar llamadas aceptadas/canceladas
+                    return;
                 }
                 
                 log(`🚨 ¡LLAMADA DETECTADA! ID: ${id} (Estado: ${data.estado})`);
@@ -148,8 +146,6 @@ function iniciarEscuchaFirebase() {
                     setStatus("🔔 TIMBRE SONANDO");
                     document.getElementById('avatar').innerText = "🔔";
                     document.getElementById('controls-incoming').classList.remove('hidden');
-                    
-                    // Traer app al frente si está en segundo plano
                     traerAlFrente();
                 }
             }
@@ -162,40 +158,34 @@ function iniciarEscuchaFirebase() {
 }
 
 // ============================================
-// 🔥 LIMPIEZA AUTOMÁTICA DE BASE DE DATOS
+// 🔥 LIMPIEZA AUTOMÁTICA
 // ============================================
 function iniciarLimpiezaAutomatica() {
     log('🧹 Iniciando sistema de limpieza automática...');
-    
-    // Limpieza inmediata al iniciar (después de 5 segundos)
     setTimeout(limpiarLlamadasViejas, 5000);
-    
-    // Limpieza periódica cada 10 minutos
     setInterval(limpiarLlamadasViejas, 10 * 60 * 1000);
 }
 
 async function limpiarLlamadasViejas() {
     try {
-        // Borrar llamadas con más de 5 minutos
-        const cincominutosAtras = new Date(Date.now() - 5 * 60 * 1000);
-        
-        const q = query(
-            collection(db, 'llamadas'),
-            where('timestamp', '<', cincominutosAtras)
+        const cincominutosAtras = firebase.firestore.Timestamp.fromDate(
+            new Date(Date.now() - 5 * 60 * 1000)
         );
         
-        const snapshot = await getDocs(q);
+        const snapshot = await db.collection('llamadas')
+            .where('timestamp', '<', cincominutosAtras)
+            .get();
         
         if (snapshot.empty) {
             log('✅ BD limpia (no hay llamadas viejas)');
             return;
         }
         
-        const batch = writeBatch(db);
+        const batch = db.batch();
         let count = 0;
         
-        snapshot.forEach((docSnap) => {
-            batch.delete(docSnap.ref);
+        snapshot.forEach((doc) => {
+            batch.delete(doc.ref);
             count++;
         });
         
@@ -203,7 +193,7 @@ async function limpiarLlamadasViejas() {
         log(`🗑️ ${count} llamada(s) antigua(s) eliminada(s)`);
         
     } catch (error) {
-        log('⚠️ Error en limpieza automática: ' + error.message);
+        log('⚠️ Error en limpieza: ' + error.message);
     }
 }
 
@@ -236,7 +226,7 @@ function activarModoSegundoPlano() {
 }
 
 // ============================================
-// NOTIFICACIONES (Backup - Firebase es primario)
+// NOTIFICACIONES
 // ============================================
 async function iniciarCapacitor() {
     if (!window.Capacitor) return;
@@ -262,8 +252,6 @@ async function iniciarCapacitor() {
             await registrarEnServidor(token.value);
         });
 
-        // Las notificaciones push son ahora BACKUP
-        // Firebase Listener es el sistema primario
         PushNotifications.addListener('pushNotificationReceived', (notification) => {
             log('🔔 NOTIFICACIÓN PUSH (Backup)');
             traerAlFrente();
@@ -305,16 +293,15 @@ window.contestarLlamada = async function() {
     stopRinging();
 
     try {
-        // 1. AVISAR A FIREBASE (Señalización)
+        // Actualizar estado a "aceptada"
         if (currentLlamadaId) {
-            log('📝 Actualizando estado a "aceptada" en Firebase...');
-            const llamadaRef = doc(db, 'llamadas', currentLlamadaId);
-            await updateDoc(llamadaRef, {
+            log('📝 Actualizando estado...');
+            await db.collection('llamadas').doc(currentLlamadaId).update({
                 estado: 'aceptada'
             });
         }
 
-        // 2. TOKEN
+        // Obtener token
         const res = await fetch(API_URL_TOKEN, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -324,7 +311,7 @@ window.contestarLlamada = async function() {
         if(!res.ok) throw new Error('Error token');
         const data = await res.json();
 
-        // 3. TWILIO
+        // Conectar Twilio
         activeRoom = await connect(data.token, {
             name: ROOM_NAME,
             audio: { echoCancellation: true, autoGainControl: true },
@@ -333,7 +320,6 @@ window.contestarLlamada = async function() {
 
         log(`✅ EN LLAMADA`);
         
-        // UI
         document.getElementById('controls-incoming').classList.add('hidden');
         document.getElementById('controls-active').classList.remove('hidden');
         document.getElementById('btn-mute').style.display = 'flex'; 
@@ -361,14 +347,12 @@ function participantConnected(participant) {
 window.rechazarLlamada = async function() {
     stopRinging();
     
-    // 🔥 ELIMINAR llamada rechazada de la BD
     if (currentLlamadaId) {
         try {
-            const llamadaRef = doc(db, 'llamadas', currentLlamadaId);
-            await deleteDoc(llamadaRef);
-            log('🗑️ Llamada rechazada eliminada de BD');
+            await db.collection('llamadas').doc(currentLlamadaId).delete();
+            log('🗑️ Llamada rechazada eliminada');
         } catch (error) {
-            log('⚠️ Error eliminando llamada: ' + error.message);
+            log('⚠️ Error eliminando: ' + error.message);
         }
     }
     
@@ -383,14 +367,12 @@ window.finalizarLlamada = async function(disconnect = true) {
         activeRoom = null;
     }
     
-    // 🔥 ELIMINAR llamada finalizada de la BD
     if (currentLlamadaId) {
         try {
-            const llamadaRef = doc(db, 'llamadas', currentLlamadaId);
-            await deleteDoc(llamadaRef);
-            log('🗑️ Llamada finalizada eliminada de BD');
+            await db.collection('llamadas').doc(currentLlamadaId).delete();
+            log('🗑️ Llamada finalizada eliminada');
         } catch (error) {
-            log('⚠️ Error eliminando llamada: ' + error.message);
+            log('⚠️ Error eliminando: ' + error.message);
         }
     }
     
@@ -422,11 +404,11 @@ function startRinging() {
         ringtoneOscillator.frequency.setValueAtTime(800, audioContext.currentTime);
         ringtoneOscillator.connect(gain);
         gain.connect(audioContext.destination);
-        gain.gain.value = 0.3; // 🔥 Subí el volumen
+        gain.gain.value = 0.3;
         ringtoneOscillator.start();
         log('🔔 SONIDO DE TIMBRE ACTIVADO');
     } catch (e) {
-        log('❌ Error iniciando timbre: ' + e.message);
+        log('❌ Error timbre: ' + e.message);
     }
 }
 
