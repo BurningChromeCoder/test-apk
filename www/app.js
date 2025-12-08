@@ -19,6 +19,11 @@ window.addEventListener('unhandledrejection', function(e) {
 });
 
 // ============================================
+// IIFE ASYNC PARA EVITAR TOP-LEVEL AWAIT
+// ============================================
+(async function() {
+
+// ============================================
 // IMPORTACIONES CON TRY-CATCH
 // ============================================
 let connect, PushNotifications;
@@ -556,3 +561,5 @@ function conectarVisualizador(stream) {
 }
 
 log('📄 app.js cargado completamente');
+
+})(); // FIN IIFE
