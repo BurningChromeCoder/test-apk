@@ -1,5 +1,22 @@
 import { connect } from 'twilio-video';
 import { PushNotifications } from '@capacitor/push-notifications';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, collection, onSnapshot, query, where, doc, updateDoc } from 'firebase/firestore';
+
+// ============================================
+// CONFIGURACIÓN FIREBASE (DIRECTO - SIN API)
+// ============================================
+const firebaseConfig = {
+    apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
+    authDomain: "puerta-c3a71.firebaseapp.com",
+    projectId: "puerta-c3a71",
+    storageBucket: "puerta-c3a71.firebasestorage.app",
+    messagingSenderId: "830550601352",
+    appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
 
 // ============================================
 // CONFIGURACIÓN
@@ -7,13 +24,8 @@ import { PushNotifications } from '@capacitor/push-notifications';
 const MY_ID = "puerta-admin-v2"; 
 const ROOM_NAME = 'sala-principal'; 
 
-// 🛑 URLs EXACTAS
 const API_URL_REGISTRO  = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
 const API_URL_TOKEN     = 'https://us-central1-puerta-c3a71.cloudfunctions.net/obtenerTokenTwilio';
-const API_URL_RESPONDER = 'https://us-central1-puerta-c3a71.cloudfunctions.net/responderLlamada'; // Gen 1 (Verifica tu URL)
-
-// NUEVA URL (Ajusta esta tras el deploy del paso 1)
-const API_URL_BUSCAR    = 'https://us-central1-puerta-c3a71.cloudfunctions.net/buscarLlamadaActiva'; 
 
 let activeRoom = null;
 let currentLlamadaId = null; 
@@ -21,6 +33,7 @@ let audioContext = null;
 let ringtoneOscillator = null; 
 let isMuted = false;
 let wakeLock = null;
+let firestoreUnsubscribe = null; // 🔥 NUEVO: Listener de Firebase
 
 // ============================================
 // LOGS
@@ -34,14 +47,11 @@ function log(msg) {
     console.log(`[App] ${msg}`);
 }
 
-/* --- EVENTO RESUME: Clave para tu problema --- */
+/* --- EVENTO RESUME --- */
 document.addEventListener('resume', () => {
     log('☀️ APP EN PRIMER PLANO');
     requestWakeLock();
     if(window.Capacitor) PushNotifications.removeAllDeliveredNotifications();
-    
-    // SI ABRES LA APP Y NO SUENA, ESTO LO ARREGLA:
-    verificarLlamadasPendientes(); 
 }, false);
 
 // ============================================
@@ -59,8 +69,6 @@ async function requestWakeLock() {
 document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible') {
         if(!wakeLock) await requestWakeLock();
-        // Doble chequeo por si acaso
-        verificarLlamadasPendientes();
     }
 });
 
@@ -69,7 +77,7 @@ document.addEventListener('visibilitychange', async () => {
 // ============================================
 window.iniciarApp = async function() {
     try {
-        log('🚀 INICIANDO V6.1 (Auto-Check)...');
+        log('🚀 INICIANDO V7.0 (Firebase Directo)...');
         
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         
@@ -84,11 +92,11 @@ window.iniciarApp = async function() {
         iniciarVisualizador();
         activarModoSegundoPlano();
 
+        // 🔥 NUEVO: ESCUCHA DIRECTA DE FIREBASE (Como el POC)
+        iniciarEscuchaFirebase();
+
         setStatus("✅ Listo para recibir llamadas");
         updateNetworkStatus('online');
-
-        // 🔥 SOLUCIÓN A TU BUG: Preguntar al servidor si hay alguien esperando
-        verificarLlamadasPendientes();
         
     } catch (e) { 
         log('❌ ERROR: ' + e.message);
@@ -97,34 +105,52 @@ window.iniciarApp = async function() {
 };
 
 // ============================================
-// NUEVA FUNCIÓN DE RECUPERACIÓN
+// 🔥 NUEVA FUNCIÓN: ESCUCHA DIRECTA FIREBASE
 // ============================================
-async function verificarLlamadasPendientes() {
-    // Si ya estamos sonando o en llamada, no hacemos nada
-    if (activeRoom || ringtoneOscillator) return;
-
-    try {
-        log('🔍 Buscando llamadas perdidas...');
-        const res = await fetch(API_URL_BUSCAR, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sala: ROOM_NAME })
-        });
-        
-        const data = await res.json();
-        
-        if (data.activa && data.llamadaId) {
-            log('🚨 ¡LLAMADA ENCONTRADA! ID: ' + data.llamadaId);
-            // Simulamos que llegó la notificación
-            procesarNotificacion({ 
-                data: { llamadaId: data.llamadaId } 
-            });
-        } else {
-            log('ℹ️ No hay llamadas pendientes');
-        }
-    } catch (e) {
-        log('⚠️ Error buscando llamadas: ' + e.message);
+function iniciarEscuchaFirebase() {
+    log('👂 Iniciando escucha DIRECTA de Firebase...');
+    
+    // Desuscribir listener anterior si existe
+    if (firestoreUnsubscribe) {
+        firestoreUnsubscribe();
     }
+    
+    // Consulta: Llamadas de nuestra sala con estado "pendiente"
+    const q = query(
+        collection(db, 'llamadas'),
+        where('sala', '==', ROOM_NAME),
+        where('estado', '==', 'pendiente')
+    );
+    
+    // Escuchar cambios en tiempo real
+    firestoreUnsubscribe = onSnapshot(q, (snapshot) => {
+        log(`🔔 Firebase: ${snapshot.size} llamada(s) pendiente(s)`);
+        
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === 'added') {
+                const data = change.doc.data();
+                const id = change.doc.id;
+                
+                log(`🚨 ¡LLAMADA DETECTADA! ID: ${id}`);
+                
+                // Solo procesar si no estamos ya en llamada
+                if (!activeRoom && !ringtoneOscillator) {
+                    currentLlamadaId = id;
+                    startRinging();
+                    setStatus("🔔 TIMBRE SONANDO");
+                    document.getElementById('avatar').innerText = "🔔";
+                    document.getElementById('controls-incoming').classList.remove('hidden');
+                    
+                    // Traer app al frente si está en segundo plano
+                    traerAlFrente();
+                }
+            }
+        });
+    }, (error) => {
+        log('❌ Error escuchando Firebase: ' + error.message);
+    });
+    
+    log('✅ Listener de Firebase activo');
 }
 
 // ============================================
@@ -156,7 +182,7 @@ function activarModoSegundoPlano() {
 }
 
 // ============================================
-// NOTIFICACIONES
+// NOTIFICACIONES (Backup - Firebase es primario)
 // ============================================
 async function iniciarCapacitor() {
     if (!window.Capacitor) return;
@@ -182,37 +208,19 @@ async function iniciarCapacitor() {
             await registrarEnServidor(token.value);
         });
 
+        // Las notificaciones push son ahora BACKUP
+        // Firebase Listener es el sistema primario
         PushNotifications.addListener('pushNotificationReceived', (notification) => {
-            log('🔔 NOTIFICACIÓN RECIBIDA');
-            procesarNotificacion(notification);
+            log('🔔 NOTIFICACIÓN PUSH (Backup)');
+            traerAlFrente();
         });
 
         PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
             log('👆 Acción Notificación');
-            procesarNotificacion(notification.notification);
             traerAlFrente();
         });
 
     } catch (e) { log('⚠️ Error Push: ' + e.message); }
-}
-
-function procesarNotificacion(notification) {
-    // Evitar procesar si ya estamos en llamada
-    if (activeRoom) return;
-
-    if (notification.data && notification.data.llamadaId) {
-        // Solo actualizamos si es un ID nuevo o no tenemos uno
-        if (currentLlamadaId !== notification.data.llamadaId) {
-            currentLlamadaId = notification.data.llamadaId;
-            log('🆔 ID LLAMADA: ' + currentLlamadaId);
-            
-            // UI y Sonido
-            startRinging();
-            setStatus("🔔 TIMBRE SONANDO");
-            document.getElementById('avatar').innerText = "🔔";
-            document.getElementById('controls-incoming').classList.remove('hidden');
-        }
-    }
 }
 
 function traerAlFrente() {
@@ -243,12 +251,12 @@ window.contestarLlamada = async function() {
     stopRinging();
 
     try {
-        // 1. AVISAR (Señalización)
+        // 1. AVISAR A FIREBASE (Señalización)
         if (currentLlamadaId) {
-            await fetch(API_URL_RESPONDER, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ llamadaId: currentLlamadaId })
+            log('📝 Actualizando estado a "aceptada" en Firebase...');
+            const llamadaRef = doc(db, 'llamadas', currentLlamadaId);
+            await updateDoc(llamadaRef, {
+                estado: 'aceptada'
             });
         }
 
@@ -298,6 +306,15 @@ function participantConnected(participant) {
 
 window.rechazarLlamada = function() {
     stopRinging();
+    
+    // Actualizar estado en Firebase
+    if (currentLlamadaId) {
+        const llamadaRef = doc(db, 'llamadas', currentLlamadaId);
+        updateDoc(llamadaRef, {
+            estado: 'cancelada'
+        }).catch(e => log('Error actualizando estado: ' + e.message));
+    }
+    
     resetState();
     if(window.Capacitor) PushNotifications.removeAllDeliveredNotifications();
     log('❌ Rechazada');
@@ -336,14 +353,20 @@ function startRinging() {
         ringtoneOscillator.frequency.setValueAtTime(800, audioContext.currentTime);
         ringtoneOscillator.connect(gain);
         gain.connect(audioContext.destination);
-        gain.gain.value = 0.1;
+        gain.gain.value = 0.3; // 🔥 Subí el volumen
         ringtoneOscillator.start();
-    } catch (e) {}
+        log('🔔 SONIDO DE TIMBRE ACTIVADO');
+    } catch (e) {
+        log('❌ Error iniciando timbre: ' + e.message);
+    }
 }
 
 function stopRinging() {
     if (ringtoneOscillator) { 
-        try { ringtoneOscillator.stop(); } catch(e){} 
+        try { 
+            ringtoneOscillator.stop(); 
+            log('🔕 Timbre detenido');
+        } catch(e){} 
         ringtoneOscillator = null; 
     }
 }
