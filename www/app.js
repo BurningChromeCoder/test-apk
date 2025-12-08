@@ -11,9 +11,9 @@ const ROOM_NAME = 'sala-principal';
 // 1. Registro de Token FCM (Gen 2)
 const API_URL_REGISTRO  = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
 // 2. Obtención de Token Twilio (Gen 1)
-const API_URL_TOKEN     = 'https://us-central1-puerta-c3a71.cloudfunctions.net/obtenerTokenTwilio';
+const API_URL_TOKEN     = 'https://obtenertokentwilio-6rmawrifca-uc.a.run.app';
 // 3. Responder/Aceptar llamada (Gen 2 - NUEVA)
-const API_URL_RESPONDER = 'https://responderllamada-6rmawrifca-uc.a.run.app';
+const API_URL_RESPONDER = 'https://us-central1-puerta-c3a71.cloudfunctions.net/responderLlamada';
 
 // Variables Globales
 let activeRoom = null;
