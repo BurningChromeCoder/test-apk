@@ -115,23 +115,28 @@ function iniciarEscuchaFirebase() {
         firestoreUnsubscribe();
     }
     
-    // Consulta: Llamadas de nuestra sala con estado "pendiente"
+    // Consulta: Llamadas de nuestra sala con estado "pendiente" O "llamando"
     const q = query(
         collection(db, 'llamadas'),
-        where('sala', '==', ROOM_NAME),
-        where('estado', '==', 'pendiente')
+        where('sala', '==', ROOM_NAME)
+        // 🔥 NO filtramos por estado aquí, lo hacemos manualmente
     );
     
     // Escuchar cambios en tiempo real
     firestoreUnsubscribe = onSnapshot(q, (snapshot) => {
-        log(`🔔 Firebase: ${snapshot.size} llamada(s) pendiente(s)`);
+        log(`🔔 Firebase: ${snapshot.size} llamada(s) en total`);
         
         snapshot.docChanges().forEach((change) => {
-            if (change.type === 'added') {
+            if (change.type === 'added' || change.type === 'modified') {
                 const data = change.doc.data();
                 const id = change.doc.id;
                 
-                log(`🚨 ¡LLAMADA DETECTADA! ID: ${id}`);
+                // 🔥 FILTRO MANUAL: Solo procesamos "pendiente" o "llamando"
+                if (data.estado !== 'pendiente' && data.estado !== 'llamando') {
+                    return; // Ignorar llamadas aceptadas/canceladas
+                }
+                
+                log(`🚨 ¡LLAMADA DETECTADA! ID: ${id} (Estado: ${data.estado})`);
                 
                 // Solo procesar si no estamos ya en llamada
                 if (!activeRoom && !ringtoneOscillator) {
