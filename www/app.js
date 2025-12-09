@@ -145,7 +145,7 @@ document.addEventListener('visibilitychange', async () => {
 // ============================================
 window.iniciarApp = async function() {
     try {
-        log('🚀 INICIANDO V7.2 DEBUG...');
+        log('🚀 INICIANDO V7.3 OPTIMIZADO...');
         
         // Verificar elementos del DOM
         const requiredElements = ['console-log', 'status-text', 'avatar', 'controls-incoming', 'controls-active'];
@@ -366,7 +366,7 @@ async function registrarEnServidor(token) {
 }
 
 // ============================================
-// CONTESTAR
+// CONTESTAR (OPTIMIZADO)
 // ============================================
 window.contestarLlamada = async function() {
     log('📞 Contestando...');
@@ -390,10 +390,33 @@ window.contestarLlamada = async function() {
         const data = await res.json();
         log('✅ Token obtenido');
 
+        // 🔧 CONFIGURACIÓN OPTIMIZADA PARA EVITAR CORTES
         activeRoom = await connect(data.token, {
             name: ROOM_NAME,
-            audio: { echoCancellation: true, autoGainControl: true },
-            video: false 
+            audio: { 
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                googEchoCancellation: true,
+                googAutoGainControl: true,
+                googNoiseSuppression: true,
+                googHighpassFilter: false,
+                googTypingNoiseDetection: false
+            },
+            video: false,
+            // Codec y bitrate optimizados
+            preferredAudioCodecs: ['opus'],
+            maxAudioBitrate: 40000, // 40kbps óptimo para voz
+            networkQuality: {
+                local: 1,
+                remote: 1
+            },
+            bandwidthProfile: {
+                video: {
+                    mode: 'collaboration',
+                    dominantSpeakerPriority: 'high'
+                }
+            }
         });
 
         log('✅ Twilio conectado');
@@ -415,11 +438,36 @@ window.contestarLlamada = async function() {
     }
 };
 
+// ============================================
+// PARTICIPANTES (OPTIMIZADO)
+// ============================================
 function participantConnected(participant) {
     log(`👤 Participante: ${participant.identity}`);
+    
     participant.on('trackSubscribed', track => {
-        document.getElementById('remoteAudio').srcObject = new MediaStream([track.mediaStreamTrack]);
+        const audioElement = document.getElementById('remoteAudio');
+        audioElement.srcObject = new MediaStream([track.mediaStreamTrack]);
+        
+        // CRÍTICO: Configurar audio element para mejor rendimiento
+        audioElement.autoplay = true;
+        audioElement.playsinline = true;
+        
+        // Prevenir suspensión de audio context
+        if (audioContext && audioContext.state === 'suspended') {
+            audioContext.resume();
+        }
+        
         conectarVisualizador(new MediaStream([track.mediaStreamTrack]));
+    });
+    
+    // Monitorear calidad de red
+    participant.on('networkQualityLevelChanged', (quality) => {
+        if (quality < 3) {
+            log(`⚠️ Calidad red baja: ${quality}/5`);
+            setStatus(`🟡 EN LLAMADA (Red: ${quality}/5)`);
+        } else {
+            setStatus("🟢 EN LLAMADA");
+        }
     });
 }
 
@@ -445,6 +493,9 @@ window.finalizarLlamada = async function(disconnect = true) {
         activeRoom.disconnect();
         activeRoom = null;
     }
+    
+    // Detener visualizador
+    if (window.stopVisualizer) window.stopVisualizer();
     
     if (currentLlamadaId) {
         try {
@@ -526,6 +577,9 @@ function updateNetworkStatus(status) {
     if(txt) txt.innerText = status === 'online' ? 'En Línea' : 'Offline';
 }
 
+// ============================================
+// VISUALIZADOR (OPTIMIZADO)
+// ============================================
 function iniciarVisualizador() {
     const canvas = document.getElementById('wave-visualizer');
     if(!canvas) return;
@@ -533,19 +587,26 @@ function iniciarVisualizador() {
     canvas.width = window.innerWidth; 
     canvas.height = 300;
     
+    let animationId = null;
+    
     function drawWave() {
-        requestAnimationFrame(drawWave);
+        animationId = requestAnimationFrame(drawWave);
         if (!window.analyserNode) return; 
+        
+        // Reducir frecuencia de actualización para ahorrar CPU
         const bufferLength = window.analyserNode.frequencyBinCount; 
         const dataArray = new Uint8Array(bufferLength);
         window.analyserNode.getByteTimeDomainData(dataArray);
+        
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.lineWidth = 2; 
         ctx.strokeStyle = '#2ecc71'; 
         ctx.beginPath();
-        const sliceWidth = canvas.width / bufferLength; 
+        
+        // Reducir puntos para mejor rendimiento
+        const sliceWidth = canvas.width / (bufferLength / 2); 
         let x = 0;
-        for (let i = 0; i < bufferLength; i++) {
+        for (let i = 0; i < bufferLength; i += 2) { // Saltar puntos
             const v = dataArray[i] / 128.0; 
             const y = v * (canvas.height / 2);
             if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); 
@@ -555,6 +616,11 @@ function iniciarVisualizador() {
         ctx.stroke();
     }
     drawWave();
+    
+    // Cleanup function
+    window.stopVisualizer = () => {
+        if (animationId) cancelAnimationFrame(animationId);
+    };
 }
 
 function conectarVisualizador(stream) {
@@ -562,8 +628,13 @@ function conectarVisualizador(stream) {
     try {
         const source = audioContext.createMediaStreamSource(stream);
         window.analyserNode = audioContext.createAnalyser(); 
-        window.analyserNode.fftSize = 2048;
+        
+        // Reducir FFT para mejor rendimiento (menos CPU = menos cortes)
+        window.analyserNode.fftSize = 512; // Era 2048, ahora más liviano
+        window.analyserNode.smoothingTimeConstant = 0.8;
+        
         source.connect(window.analyserNode);
+        
         const waveVis = document.getElementById('wave-visualizer');
         if(waveVis) waveVis.classList.add('active');
     } catch (e) {
