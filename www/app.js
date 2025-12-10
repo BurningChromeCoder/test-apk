@@ -57,7 +57,6 @@ try {
 // ============================================
 let db;
 try {
-    // Verificar si firebase ya está cargado globalmente
     if (typeof firebase !== 'undefined') {
         console.log('✅ Firebase global detectado');
         if (!firebase.apps.length) {
@@ -89,6 +88,9 @@ const ROOM_NAME = 'sala-principal';
 const API_URL_REGISTRO  = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
 const API_URL_TOKEN     = 'https://us-central1-puerta-c3a71.cloudfunctions.net/obtenerTokenTwilio';
 
+const MAX_REINTENTOS = 3;
+const ICE_TIMEOUT = 10000;
+
 let activeRoom = null;
 let currentLlamadaId = null; 
 let audioContext = null;
@@ -96,6 +98,12 @@ let ringtoneOscillator = null;
 let isMuted = false;
 let wakeLock = null;
 let firestoreUnsubscribe = null;
+let reconexionIntentos = 0;
+let iceTimeoutTimer = null;
+let trackHealthCheck = null;
+let currentBitrate = 40000;
+let isReconnecting = false;
+let audioBeepContext = null;
 
 // ============================================
 // LOGS VISIBLES
@@ -109,8 +117,86 @@ function log(msg) {
     console.log(`[App] ${msg}`);
 }
 
-// Primer log para verificar que el script se carga
 log('📄 app.js ejecutándose...');
+
+// ============================================
+// 🔊 SISTEMA DE BEEPS Y FEEDBACK
+// ============================================
+function inicializarAudioContext() {
+    if (!audioBeepContext) {
+        audioBeepContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+}
+
+function playBeep(frequency, duration, volume = 0.3) {
+    inicializarAudioContext();
+    if (audioBeepContext.state === 'suspended') {
+        audioBeepContext.resume();
+    }
+    
+    const oscillator = audioBeepContext.createOscillator();
+    const gainNode = audioBeepContext.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioBeepContext.destination);
+    
+    oscillator.frequency.value = frequency;
+    oscillator.type = 'sine';
+    gainNode.gain.value = volume;
+    
+    oscillator.start(audioBeepContext.currentTime);
+    oscillator.stop(audioBeepContext.currentTime + duration / 1000);
+    
+    log(`🔊 Beep: ${frequency}Hz`);
+}
+
+// 🔊 BEEP PRINCIPAL: "Ya pueden hablar"
+function playReadyBeep() {
+    playBeep(700, 400, 0.35);
+}
+
+function playDoubleBeep() {
+    playBeep(600, 120);
+    setTimeout(() => playBeep(800, 150), 150);
+}
+
+function playWarningBeep() {
+    playBeep(400, 200, 0.2);
+}
+
+function vibrar(pattern) {
+    if ('vibrate' in navigator) {
+        navigator.vibrate(pattern);
+    }
+}
+
+function flashScreen(color, duration = 300) {
+    const flash = document.createElement('div');
+    flash.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: ${color};
+        opacity: 0.3;
+        z-index: 9999;
+        pointer-events: none;
+        animation: fadeOut ${duration}ms ease-out;
+    `;
+    document.body.appendChild(flash);
+    setTimeout(() => flash.remove(), duration);
+}
+
+// Agregar CSS para animación
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes fadeOut {
+        0% { opacity: 0.3; }
+        100% { opacity: 0; }
+    }
+`;
+document.head.appendChild(style);
 
 /* --- EVENTO RESUME --- */
 document.addEventListener('resume', () => {
@@ -141,13 +227,261 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ============================================
+// 🔥 AJUSTE DINÁMICO DE BITRATE
+// ============================================
+function ajustarBitrate(newBitrate) {
+    if (currentBitrate === newBitrate || !activeRoom) return;
+    currentBitrate = newBitrate;
+    
+    activeRoom.localParticipant.audioTracks.forEach(publication => {
+        const track = publication.track;
+        if (track) {
+            track.mediaStreamTrack.applyConstraints({
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                sampleRate: newBitrate < 30000 ? 16000 : 48000,
+                channelCount: 1
+            }).catch(e => log("⚠️ Error ajustando bitrate: " + e.message));
+        }
+    });
+    
+    log(`🔧 Bitrate ajustado a ${newBitrate/1000}kbps`);
+}
+
+// ============================================
+// 🔥 INDICADOR DE CALIDAD DE RED
+// ============================================
+function actualizarIndicadorRed(quality) {
+    const qualityMap = {
+        5: '⚡ Excelente',
+        4: '✅ Buena',
+        3: '⚠️ Regular',
+        2: '🔶 Débil',
+        1: '❌ Mala',
+        0: '❌ Sin señal'
+    };
+    
+    updateNetworkStatus(quality >= 3 ? 'online' : 'offline', qualityMap[quality] || 'Desconocida');
+    
+    // 🔊 Beep de advertencia si la red es muy mala
+    if (quality <= 2) {
+        playWarningBeep();
+        vibrar(200);
+    }
+    
+    // Ajustar bitrate según calidad
+    if (quality === 1) {
+        ajustarBitrate(16000);
+    } else if (quality === 2) {
+        ajustarBitrate(24000);
+    } else if (quality === 3) {
+        ajustarBitrate(32000);
+    } else {
+        ajustarBitrate(40000);
+    }
+}
+
+// ============================================
+// 🔥 EVENTOS DE RECONEXIÓN
+// ============================================
+function configurarEventosReconexion(room) {
+    // Reconectando
+    room.on('reconnecting', (error) => {
+        isReconnecting = true;
+        log('🔄 Reconectando... (' + error.message + ')');
+        setStatus("🔄 RECONECTANDO...");
+        document.getElementById('avatar').innerText = "🔄";
+    });
+
+    // Reconexión exitosa
+    room.on('reconnected', () => {
+        isReconnecting = false;
+        reconexionIntentos = 0;
+        log('✅ Reconexión exitosa');
+        setStatus("🟢 EN LLAMADA");
+        document.getElementById('avatar').innerText = "🔊";
+        
+        // 🔊 Feedback: Reconexión exitosa
+        playDoubleBeep();
+        vibrar([100, 50, 100, 50, 100]);
+        flashScreen('#27ae60', 400);
+    });
+
+    // Desconexión
+    room.on('disconnected', (room, error) => {
+        log('❌ Desconectado: ' + (error ? error.message : 'Normal'));
+        
+        if (!error) {
+            finalizarLlamada(false);
+            return;
+        }
+
+        if (esErrorRecuperable(error) && reconexionIntentos < MAX_REINTENTOS) {
+            reconexionIntentos++;
+            log(`🔄 Intento ${reconexionIntentos}/${MAX_REINTENTOS}...`);
+            setTimeout(() => intentarReconexion(), 2000);
+        } else {
+            setStatus("❌ Desconectado");
+            finalizarLlamada(false);
+        }
+    });
+
+    room.on('participantConnected', p => participantConnected(p));
+}
+
+// ============================================
+// 🔥 DETERMINAR SI ERROR ES RECUPERABLE
+// ============================================
+function esErrorRecuperable(error) {
+    const recuperableCodes = [
+        53000, // Signaling connection error
+        53001, // Media connection error
+        53405, // Signaling connection timeout
+        53407, // ICE connection timeout
+    ];
+    
+    return error && recuperableCodes.includes(error.code);
+}
+
+// ============================================
+// 🔥 INTENTAR RECONEXIÓN COMPLETA
+// ============================================
+async function intentarReconexion() {
+    try {
+        log('🔄 Reconectando sala completa...');
+        setStatus("🔄 RECONECTANDO...");
+        
+        if (activeRoom) {
+            activeRoom.disconnect();
+            activeRoom = null;
+        }
+
+        // Obtener nuevo token
+        const res = await fetch(API_URL_TOKEN, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identidad: 'Admin-' + Date.now(), sala: ROOM_NAME })
+        });
+        
+        if(!res.ok) throw new Error('Error token: ' + res.status);
+        const data = await res.json();
+
+        activeRoom = await connect(data.token, {
+            name: ROOM_NAME,
+            audio: { 
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                googEchoCancellation: true,
+                googAutoGainControl: true,
+                googNoiseSuppression: true,
+                googHighpassFilter: false,
+                googTypingNoiseDetection: false
+            },
+            video: false,
+            preferredAudioCodecs: ['opus'],
+            maxAudioBitrate: 40000,
+            networkQuality: { local: 1, remote: 1 },
+            bandwidthProfile: {
+                video: {
+                    mode: 'collaboration',
+                    dominantSpeakerPriority: 'high'
+                }
+            }
+        });
+
+        configurarEventosReconexion(activeRoom);
+        activeRoom.participants.forEach(p => participantConnected(p));
+        
+        log('✅ Reconexión completa exitosa');
+        setStatus("🟢 EN LLAMADA");
+        
+    } catch (e) {
+        log('❌ Reconexión falló: ' + e.message);
+        
+        if (reconexionIntentos < MAX_REINTENTOS) {
+            reconexionIntentos++;
+            setTimeout(() => intentarReconexion(), 3000);
+        } else {
+            setStatus("❌ Sin conexión");
+            finalizarLlamada(false);
+        }
+    }
+}
+
+// ============================================
+// 🔥 CHEQUEO DE SALUD DE TRACKS
+// ============================================
+function iniciarCheckeoTracks() {
+    if (trackHealthCheck) clearInterval(trackHealthCheck);
+    
+    trackHealthCheck = setInterval(() => {
+        if (!activeRoom || isReconnecting) return;
+        
+        let tracksOk = true;
+        
+        activeRoom.participants.forEach(participant => {
+            participant.audioTracks.forEach(publication => {
+                const track = publication.track;
+                if (track && track.mediaStreamTrack.readyState !== 'live') {
+                    log('⚠️ Track de audio muerto detectado');
+                    tracksOk = false;
+                }
+            });
+        });
+        
+        if (!tracksOk && !isReconnecting) {
+            log('🔧 Reparando tracks...');
+            activeRoom.participants.forEach(p => {
+                p.tracks.forEach(pub => {
+                    if (pub.track && pub.track.kind === 'audio') {
+                        handleAudioTrack(pub.track, true);
+                    }
+                });
+            });
+        }
+    }, 5000);
+}
+
+function detenerCheckeoTracks() {
+    if (trackHealthCheck) {
+        clearInterval(trackHealthCheck);
+        trackHealthCheck = null;
+    }
+}
+
+// ============================================
+// 🔥 TIMEOUT ICE CONNECTION
+// ============================================
+function iniciarIceTimeout() {
+    if (iceTimeoutTimer) clearTimeout(iceTimeoutTimer);
+    
+    iceTimeoutTimer = setTimeout(() => {
+        if (activeRoom && activeRoom.state === 'connecting') {
+            log('❌ ICE connection timeout');
+            intentarReconexion();
+        }
+    }, ICE_TIMEOUT);
+}
+
+function detenerIceTimeout() {
+    if (iceTimeoutTimer) {
+        clearTimeout(iceTimeoutTimer);
+        iceTimeoutTimer = null;
+    }
+}
+
+// ============================================
 // INICIALIZACIÓN
 // ============================================
 window.iniciarApp = async function() {
     try {
-        log('🚀 INICIANDO V7.3 OPTIMIZADO...');
+        log('🚀 INICIANDO V8.0 PRO...');
         
-        // Verificar elementos del DOM
+        // Inicializar audio context para beeps
+        inicializarAudioContext();
+        
         const requiredElements = ['console-log', 'status-text', 'avatar', 'controls-incoming', 'controls-active'];
         for (const id of requiredElements) {
             if (!document.getElementById(id)) {
@@ -156,7 +490,6 @@ window.iniciarApp = async function() {
         }
         log('✅ DOM verificado');
         
-        // Audio Context
         try {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             log('✅ Audio Context creado');
@@ -164,7 +497,6 @@ window.iniciarApp = async function() {
             log('⚠️ Audio Context error: ' + e.message);
         }
         
-        // Remover onboarding
         const onboarding = document.getElementById('onboarding');
         if(onboarding) {
             onboarding.style.opacity = '0';
@@ -184,7 +516,6 @@ window.iniciarApp = async function() {
         iniciarVisualizador();
         activarModoSegundoPlano();
 
-        // Firebase
         if (db) {
             log('🔥 Iniciando Firebase listener...');
             iniciarEscuchaFirebase();
@@ -194,7 +525,7 @@ window.iniciarApp = async function() {
         }
 
         setStatus("✅ Listo para recibir llamadas");
-        updateNetworkStatus('online');
+        updateNetworkStatus('online', 'En Línea');
         log('✅ APP LISTA');
         
     } catch (e) { 
@@ -366,31 +697,37 @@ async function registrarEnServidor(token) {
 }
 
 // ============================================
-// CONTESTAR (OPTIMIZADO)
+// CONTESTAR (OPTIMIZADO CON RECONEXIÓN)
 // ============================================
 window.contestarLlamada = async function() {
     log('📞 Contestando...');
     stopRinging();
 
-    try {
-        if (currentLlamadaId) {
-            await db.collection('llamadas').doc(currentLlamadaId).update({
-                estado: 'aceptada'
-            });
-            log('✅ Estado actualizado');
-        }
+    // 🔇 Solo vibración (sin beep aún)
+    vibrar(200);
+    flashScreen('#2ecc71', 300);
 
-        const res = await fetch(API_URL_TOKEN, {
+    try {
+        // 🚀 Actualizar estado y obtener token EN PARALELO
+        const updatePromise = currentLlamadaId ? 
+            db.collection('llamadas').doc(currentLlamadaId).update({ estado: 'aceptada' }) : 
+            Promise.resolve();
+        
+        const tokenPromise = fetch(API_URL_TOKEN, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ identidad: 'Admin-' + Date.now(), sala: ROOM_NAME })
         });
+
+        const [_, res] = await Promise.all([updatePromise, tokenPromise]);
+        log('✅ Estado actualizado + Token obtenido');
         
         if(!res.ok) throw new Error('Error token: ' + res.status);
         const data = await res.json();
-        log('✅ Token obtenido');
 
-        // 🔧 CONFIGURACIÓN OPTIMIZADA PARA EVITAR CORTES
+        iniciarIceTimeout();
+
+        // 🔧 CONFIGURACIÓN OPTIMIZADA
         activeRoom = await connect(data.token, {
             name: ROOM_NAME,
             audio: { 
@@ -404,13 +741,9 @@ window.contestarLlamada = async function() {
                 googTypingNoiseDetection: false
             },
             video: false,
-            // Codec y bitrate optimizados
             preferredAudioCodecs: ['opus'],
-            maxAudioBitrate: 40000, // 40kbps óptimo para voz
-            networkQuality: {
-                local: 1,
-                remote: 1
-            },
+            maxAudioBitrate: 40000,
+            networkQuality: { local: 1, remote: 1 },
             bandwidthProfile: {
                 video: {
                     mode: 'collaboration',
@@ -420,16 +753,28 @@ window.contestarLlamada = async function() {
         });
 
         log('✅ Twilio conectado');
+        detenerIceTimeout();
+        
+        // Configurar eventos de reconexión
+        configurarEventosReconexion(activeRoom);
+        
+        // Iniciar chequeo de tracks
+        iniciarCheckeoTracks();
         
         document.getElementById('controls-incoming').classList.add('hidden');
         document.getElementById('controls-active').classList.remove('hidden');
         document.getElementById('btn-mute').style.display = 'flex'; 
-        setStatus("🟢 EN LLAMADA");
+        setStatus("🟢 CONECTANDO...");
         document.getElementById('avatar').innerText = "🔊";
 
         activeRoom.participants.forEach(p => participantConnected(p));
-        activeRoom.on('participantConnected', p => participantConnected(p));
-        activeRoom.on('disconnected', () => finalizarLlamada(false));
+        
+        setTimeout(() => {
+            if (activeRoom && activeRoom.participants.size === 0) {
+                log('⚠️ Aún no se conectó el visitante');
+                setStatus("🟡 ESPERANDO VISITANTE...");
+            }
+        }, 2000);
 
     } catch (err) {
         log('❌ Error contestar: ' + err.message);
@@ -439,36 +784,61 @@ window.contestarLlamada = async function() {
 };
 
 // ============================================
-// PARTICIPANTES (OPTIMIZADO)
+// PARTICIPANTES (OPTIMIZADO CON RECONEXIÓN)
 // ============================================
 function participantConnected(participant) {
     log(`👤 Participante: ${participant.identity}`);
     
-    participant.on('trackSubscribed', track => {
-        const audioElement = document.getElementById('remoteAudio');
-        audioElement.srcObject = new MediaStream([track.mediaStreamTrack]);
-        
-        // CRÍTICO: Configurar audio element para mejor rendimiento
-        audioElement.autoplay = true;
-        audioElement.playsinline = true;
-        
-        // Prevenir suspensión de audio context
-        if (audioContext && audioContext.state === 'suspended') {
-            audioContext.resume();
+    // Manejar tracks ya existentes
+    participant.tracks.forEach(publication => {
+        if (publication.isSubscribed && publication.track.kind === 'audio') {
+            handleAudioTrack(publication.track);
         }
-        
-        conectarVisualizador(new MediaStream([track.mediaStreamTrack]));
     });
     
-    // Monitorear calidad de red
-    participant.on('networkQualityLevelChanged', (quality) => {
-        if (quality < 3) {
-            log(`⚠️ Calidad red baja: ${quality}/5`);
-            setStatus(`🟡 EN LLAMADA (Red: ${quality}/5)`);
-        } else {
-            setStatus("🟢 EN LLAMADA");
+    // Manejar nuevos tracks
+    participant.on('trackSubscribed', track => {
+        if (track.kind === 'audio') {
+            handleAudioTrack(track);
         }
     });
+    
+    // 🔥 Monitorear calidad de red
+    participant.on('networkQualityLevelChanged', (quality) => {
+        actualizarIndicadorRed(quality);
+        
+        if (quality < 2) {
+            log(`⚠️ Red muy débil: ${quality}/5`);
+        }
+    });
+}
+
+function handleAudioTrack(track, forcing = false) {
+    const audioElement = document.getElementById('remoteAudio');
+    audioElement.srcObject = new MediaStream([track.mediaStreamTrack]);
+    
+    audioElement.autoplay = true;
+    audioElement.playsinline = true;
+    
+    if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+    }
+    
+    conectarVisualizador(new MediaStream([track.mediaStreamTrack]));
+    
+    if (forcing) {
+        log('🔧 Track de audio reparado');
+        playBeep(600, 100);
+    } else {
+        log('🔊 Audio del visitante conectado');
+        
+        // 🔊🔊 BEEP PRINCIPAL: "YA PUEDEN HABLAR"
+        playReadyBeep();
+        vibrar([300]);
+        flashScreen('#27ae60', 500);
+        setStatus("🟢 EN LLAMADA");
+        document.getElementById('status-text').innerText = "🟢 YA PUEDEN HABLAR";
+    }
 }
 
 window.rechazarLlamada = async function() {
@@ -494,7 +864,9 @@ window.finalizarLlamada = async function(disconnect = true) {
         activeRoom = null;
     }
     
-    // Detener visualizador
+    detenerCheckeoTracks();
+    detenerIceTimeout();
+    
     if (window.stopVisualizer) window.stopVisualizer();
     
     if (currentLlamadaId) {
@@ -512,12 +884,15 @@ window.finalizarLlamada = async function(disconnect = true) {
 function resetState() {
     stopRinging();
     activeRoom = null;
-    currentLlamadaId = null; 
+    currentLlamadaId = null;
+    reconexionIntentos = 0;
+    isReconnecting = false;
     document.getElementById('controls-incoming').classList.add('hidden');
     document.getElementById('controls-active').classList.add('hidden');
     document.getElementById('btn-mute').style.display = 'none';
     setStatus("✅ Listo para recibir llamadas");
     document.getElementById('avatar').innerText = "🔒";
+    updateNetworkStatus('online', 'En Línea');
 }
 
 // ============================================
@@ -570,11 +945,11 @@ function setStatus(msg) {
     if(el) el.innerText = msg; 
 }
 
-function updateNetworkStatus(status) {
+function updateNetworkStatus(status, text) {
     const dot = document.getElementById('net-dot');
     const txt = document.getElementById('net-text');
     if(dot) dot.className = 'dot ' + status;
-    if(txt) txt.innerText = status === 'online' ? 'En Línea' : 'Offline';
+    if(txt) txt.innerText = text || (status === 'online' ? 'En Línea' : 'Offline');
 }
 
 // ============================================
@@ -593,7 +968,6 @@ function iniciarVisualizador() {
         animationId = requestAnimationFrame(drawWave);
         if (!window.analyserNode) return; 
         
-        // Reducir frecuencia de actualización para ahorrar CPU
         const bufferLength = window.analyserNode.frequencyBinCount; 
         const dataArray = new Uint8Array(bufferLength);
         window.analyserNode.getByteTimeDomainData(dataArray);
@@ -603,10 +977,9 @@ function iniciarVisualizador() {
         ctx.strokeStyle = '#2ecc71'; 
         ctx.beginPath();
         
-        // Reducir puntos para mejor rendimiento
         const sliceWidth = canvas.width / (bufferLength / 2); 
         let x = 0;
-        for (let i = 0; i < bufferLength; i += 2) { // Saltar puntos
+        for (let i = 0; i < bufferLength; i += 2) {
             const v = dataArray[i] / 128.0; 
             const y = v * (canvas.height / 2);
             if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); 
@@ -617,7 +990,6 @@ function iniciarVisualizador() {
     }
     drawWave();
     
-    // Cleanup function
     window.stopVisualizer = () => {
         if (animationId) cancelAnimationFrame(animationId);
     };
@@ -629,8 +1001,7 @@ function conectarVisualizador(stream) {
         const source = audioContext.createMediaStreamSource(stream);
         window.analyserNode = audioContext.createAnalyser(); 
         
-        // Reducir FFT para mejor rendimiento (menos CPU = menos cortes)
-        window.analyserNode.fftSize = 512; // Era 2048, ahora más liviano
+        window.analyserNode.fftSize = 512;
         window.analyserNode.smoothingTimeConstant = 0.8;
         
         source.connect(window.analyserNode);
