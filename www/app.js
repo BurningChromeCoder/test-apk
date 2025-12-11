@@ -1,3 +1,5 @@
+import { Haptics } from '@capacitor/haptics';
+
 // ============================================
 // CAPTURA DE ERRORES GLOBAL
 // ============================================
