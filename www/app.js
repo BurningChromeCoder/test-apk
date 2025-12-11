@@ -80,7 +80,7 @@ try {
 }
 
 // ============================================
-// CONFIGURACIÓN
+// CONFIGURACIÓN (TUS ESPECIFICACIONES)
 // ============================================
 const MY_ID = "puerta-admin-v2"; 
 const ROOM_NAME = 'sala-principal'; 
@@ -88,8 +88,15 @@ const ROOM_NAME = 'sala-principal';
 const API_URL_REGISTRO  = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
 const API_URL_TOKEN     = 'https://us-central1-puerta-c3a71.cloudfunctions.net/obtenerTokenTwilio';
 
-const MAX_REINTENTOS = 3;
+const MAX_REINTENTOS = 5; // 🔥 5 intentos
+const REINTENTO_DELAY = 1000; // 🔥 1 segundo
 const ICE_TIMEOUT = 10000;
+const EMPTY_ROOM_TIMEOUT = 25000; // 🔥 25 segundos
+const MAX_CALL_DURATION = 300000; // 🔥 5 minutos
+
+// 🔥 MODO NO MOLESTAR: 20:00 - 8:00
+const DO_NOT_DISTURB_START = 20; // 8 PM
+const DO_NOT_DISTURB_END = 8; // 8 AM
 
 let activeRoom = null;
 let currentLlamadaId = null; 
@@ -104,6 +111,8 @@ let trackHealthCheck = null;
 let currentBitrate = 40000;
 let isReconnecting = false;
 let audioBeepContext = null;
+let emptyRoomTimeout = null;
+let maxCallTimeout = null;
 
 // ============================================
 // LOGS VISIBLES
@@ -128,7 +137,40 @@ function inicializarAudioContext() {
     }
 }
 
-function playBeep(frequency, duration, volume = 0.3) {
+// 🔥 VOLUMEN ADAPTATIVO SEGÚN RUIDO AMBIENTE
+async function getAmbientVolume() {
+    if (!audioBeepContext) return 0.7;
+    
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const analyser = audioBeepContext.createAnalyser();
+        const source = audioBeepContext.createMediaStreamSource(stream);
+        source.connect(analyser);
+        
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
+        
+        const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+        
+        stream.getTracks().forEach(t => t.stop());
+        
+        if (avg > 50) {
+            log('🔊 Ambiente ruidoso: volumen 0.9');
+            return 0.9;
+        }
+        if (avg > 30) {
+            log('🔊 Ambiente medio: volumen 0.7');
+            return 0.7;
+        }
+        log('🔊 Ambiente silencioso: volumen 0.5');
+        return 0.5;
+        
+    } catch (e) {
+        return 0.7;
+    }
+}
+
+function playBeep(frequency, duration, volume = 0.7) {
     inicializarAudioContext();
     if (audioBeepContext.state === 'suspended') {
         audioBeepContext.resume();
@@ -147,26 +189,29 @@ function playBeep(frequency, duration, volume = 0.3) {
     oscillator.start(audioBeepContext.currentTime);
     oscillator.stop(audioBeepContext.currentTime + duration / 1000);
     
-    log(`🔊 Beep: ${frequency}Hz`);
+    log(`🔊 Beep: ${frequency}Hz, vol: ${volume}`);
 }
 
-// 🔊 BEEP PRINCIPAL: "Ya pueden hablar"
-function playReadyBeep() {
-    playBeep(700, 400, 0.35);
+// 🔥 BEEP PRINCIPAL: 900Hz, 500ms, volumen adaptativo
+async function playReadyBeep() {
+    const volume = await getAmbientVolume();
+    playBeep(900, 500, volume);
 }
 
 function playDoubleBeep() {
-    playBeep(600, 120);
-    setTimeout(() => playBeep(800, 150), 150);
+    playBeep(900, 150, 0.7);
+    setTimeout(() => playBeep(900, 150, 0.7), 200);
 }
 
 function playWarningBeep() {
-    playBeep(400, 200, 0.2);
+    playBeep(400, 200, 0.5);
 }
 
-function vibrar(pattern) {
+// 🔥 VIBRACIÓN: Patrón medio [200, 100, 200]
+function vibrar(pattern = [200, 100, 200]) {
     if ('vibrate' in navigator) {
         navigator.vibrate(pattern);
+        log(`📳 Vibración: ${JSON.stringify(pattern)}`);
     }
 }
 
@@ -188,7 +233,6 @@ function flashScreen(color, duration = 300) {
     setTimeout(() => flash.remove(), duration);
 }
 
-// Agregar CSS para animación
 const style = document.createElement('style');
 style.textContent = `
     @keyframes fadeOut {
@@ -225,6 +269,23 @@ document.addEventListener('visibilitychange', async () => {
         if(!wakeLock) await requestWakeLock();
     }
 });
+
+// ============================================
+// 🔥 MODO NO MOLESTAR (20:00 - 8:00)
+// ============================================
+function estaEnModoNoMolestar() {
+    const ahora = new Date();
+    const hora = ahora.getHours();
+    
+    // Entre 20:00 y 23:59 O entre 00:00 y 7:59
+    const enModoNoMolestar = hora >= DO_NOT_DISTURB_START || hora < DO_NOT_DISTURB_END;
+    
+    if (enModoNoMolestar) {
+        log(`🌙 Modo No Molestar (${hora}:00 - Fuera de horario 8:00-20:00)`);
+    }
+    
+    return enModoNoMolestar;
+}
 
 // ============================================
 // 🔥 AJUSTE DINÁMICO DE BITRATE
@@ -264,13 +325,12 @@ function actualizarIndicadorRed(quality) {
     
     updateNetworkStatus(quality >= 3 ? 'online' : 'offline', qualityMap[quality] || 'Desconocida');
     
-    // 🔊 Beep de advertencia si la red es muy mala
+    // 🔊 Beep + vibración si red muy mala
     if (quality <= 2) {
         playWarningBeep();
-        vibrar(200);
+        vibrar([200]);
     }
     
-    // Ajustar bitrate según calidad
     if (quality === 1) {
         ajustarBitrate(16000);
     } else if (quality === 2) {
@@ -286,15 +346,16 @@ function actualizarIndicadorRed(quality) {
 // 🔥 EVENTOS DE RECONEXIÓN
 // ============================================
 function configurarEventosReconexion(room) {
-    // Reconectando
     room.on('reconnecting', (error) => {
         isReconnecting = true;
         log('🔄 Reconectando... (' + error.message + ')');
         setStatus("🔄 RECONECTANDO...");
         document.getElementById('avatar').innerText = "🔄";
+        
+        // 🔊 Vibración
+        vibrar([200, 100, 200]);
     });
 
-    // Reconexión exitosa
     room.on('reconnected', () => {
         isReconnecting = false;
         reconexionIntentos = 0;
@@ -302,13 +363,12 @@ function configurarEventosReconexion(room) {
         setStatus("🟢 EN LLAMADA");
         document.getElementById('avatar').innerText = "🔊";
         
-        // 🔊 Feedback: Reconexión exitosa
+        // 🔊 Doble beep + vibración
         playDoubleBeep();
         vibrar([100, 50, 100, 50, 100]);
         flashScreen('#27ae60', 400);
     });
 
-    // Desconexión
     room.on('disconnected', (room, error) => {
         log('❌ Desconectado: ' + (error ? error.message : 'Normal'));
         
@@ -317,30 +377,24 @@ function configurarEventosReconexion(room) {
             return;
         }
 
+        // 🔥 5 INTENTOS CON 1 SEGUNDO DE DELAY
         if (esErrorRecuperable(error) && reconexionIntentos < MAX_REINTENTOS) {
             reconexionIntentos++;
             log(`🔄 Intento ${reconexionIntentos}/${MAX_REINTENTOS}...`);
-            setTimeout(() => intentarReconexion(), 2000);
+            setTimeout(() => intentarReconexion(), REINTENTO_DELAY);
         } else {
             setStatus("❌ Desconectado");
-            finalizarLlamada(false);
+            // 🔥 RECARGAR PÁGINA
+            setTimeout(() => location.reload(), 3000);
         }
     });
 
     room.on('participantConnected', p => participantConnected(p));
+    room.on('participantDisconnected', participantDisconnected);
 }
 
-// ============================================
-// 🔥 DETERMINAR SI ERROR ES RECUPERABLE
-// ============================================
 function esErrorRecuperable(error) {
-    const recuperableCodes = [
-        53000, // Signaling connection error
-        53001, // Media connection error
-        53405, // Signaling connection timeout
-        53407, // ICE connection timeout
-    ];
-    
+    const recuperableCodes = [53000, 53001, 53405, 53407];
     return error && recuperableCodes.includes(error.code);
 }
 
@@ -357,7 +411,6 @@ async function intentarReconexion() {
             activeRoom = null;
         }
 
-        // Obtener nuevo token
         const res = await fetch(API_URL_TOKEN, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -402,10 +455,10 @@ async function intentarReconexion() {
         
         if (reconexionIntentos < MAX_REINTENTOS) {
             reconexionIntentos++;
-            setTimeout(() => intentarReconexion(), 3000);
+            setTimeout(() => intentarReconexion(), REINTENTO_DELAY);
         } else {
             setStatus("❌ Sin conexión");
-            finalizarLlamada(false);
+            setTimeout(() => location.reload(), 2000);
         }
     }
 }
@@ -477,9 +530,8 @@ function detenerIceTimeout() {
 // ============================================
 window.iniciarApp = async function() {
     try {
-        log('🚀 INICIANDO V8.0 PRO...');
+        log('🚀 INICIANDO V9.0 FINAL...');
         
-        // Inicializar audio context para beeps
         inicializarAudioContext();
         
         const requiredElements = ['console-log', 'status-text', 'avatar', 'controls-incoming', 'controls-active'];
@@ -528,6 +580,22 @@ window.iniciarApp = async function() {
         updateNetworkStatus('online', 'En Línea');
         log('✅ APP LISTA');
         
+        // 🔥 TEST DE VIBRACIÓN
+        setTimeout(() => {
+            log('🧪 Probando vibración...');
+            vibrar([200]);
+            
+            setTimeout(() => {
+                const resultado = confirm('¿Sentiste la vibración?\n(Presiona OK si sí, Cancelar si no)');
+                if (!resultado) {
+                    log('⚠️ Vibración no funciona');
+                    alert('⚠️ La vibración no funciona.\nVerifica permisos en:\nAjustes > Notificaciones > MiPuerta');
+                } else {
+                    log('✅ Vibración OK');
+                }
+            }, 1000);
+        }, 1000);
+        
     } catch (e) { 
         log('❌ ERROR CRÍTICO: ' + e.message);
         alert("Error inicialización: " + e.message);
@@ -536,7 +604,7 @@ window.iniciarApp = async function() {
 };
 
 // ============================================
-// FIREBASE LISTENER
+// FIREBASE LISTENER (CON MODO NO MOLESTAR)
 // ============================================
 function iniciarEscuchaFirebase() {
     try {
@@ -560,6 +628,22 @@ function iniciarEscuchaFirebase() {
                         return;
                     }
                     
+                    // 🔥 VERIFICAR MODO NO MOLESTAR
+                    if (estaEnModoNoMolestar()) {
+                        log(`🌙 Llamada bloqueada (Modo No Molestar)`);
+                        
+                        // Rechazar automáticamente
+                        db.collection('llamadas').doc(id).delete()
+                          .then(() => log('🗑️ Llamada rechazada (fuera de horario)'))
+                          .catch(e => log('⚠️ Error: ' + e.message));
+                        
+                        // Mostrar notificación silenciosa
+                        setStatus("🌙 Fuera de horario (20:00-8:00)");
+                        setTimeout(() => setStatus("✅ Listo para recibir llamadas"), 3000);
+                        
+                        return; // No procesar la llamada
+                    }
+                    
                     log(`🚨 LLAMADA: ${id} (${data.estado})`);
                     
                     if (!activeRoom && !ringtoneOscillator) {
@@ -568,6 +652,10 @@ function iniciarEscuchaFirebase() {
                         setStatus("🔔 TIMBRE SONANDO");
                         document.getElementById('avatar').innerText = "🔔";
                         document.getElementById('controls-incoming').classList.remove('hidden');
+                        
+                        // 🔊 Vibración
+                        vibrar([200, 100, 200, 100, 200]);
+                        
                         traerAlFrente();
                     }
                 }
@@ -676,10 +764,32 @@ async function iniciarCapacitor() {
 }
 
 function traerAlFrente() {
-    if (window.cordova && window.cordova.plugins && window.cordova.plugins.backgroundMode) {
-        window.cordova.plugins.backgroundMode.wakeUp();
-        window.cordova.plugins.backgroundMode.unlock();
-        window.cordova.plugins.backgroundMode.moveToForeground();
+    log('🚀 Intentando traer app al frente...');
+    
+    if (window.cordova?.plugins?.backgroundMode) {
+        const bg = window.cordova.plugins.backgroundMode;
+        bg.wakeUp();
+        bg.unlock();
+        bg.moveToForeground();
+        log('✅ Background mode: moveToForeground');
+    }
+    
+    if (window.Capacitor) {
+        try {
+            window.dispatchEvent(new Event('focus'));
+            window.focus();
+            log('✅ Window focus triggered');
+        } catch (e) {
+            log('⚠️ Focus error: ' + e.message);
+        }
+    }
+    
+    requestWakeLock();
+    
+    vibrar([500, 200, 500, 200, 500]);
+    
+    if (audioBeepContext) {
+        playBeep(800, 100, 0.7);
     }
 }
 
@@ -697,18 +807,18 @@ async function registrarEnServidor(token) {
 }
 
 // ============================================
-// CONTESTAR (OPTIMIZADO CON RECONEXIÓN)
+// 🔥 CONTESTAR (CON TODOS LOS TIMEOUTS)
 // ============================================
 window.contestarLlamada = async function() {
     log('📞 Contestando...');
     stopRinging();
 
-    // 🔇 Solo vibración (sin beep aún)
-    vibrar(200);
+    // 🔊 Vibración
+    vibrar([200, 100, 200]);
     flashScreen('#2ecc71', 300);
 
     try {
-        // 🚀 Actualizar estado y obtener token EN PARALELO
+        // Operaciones en paralelo
         const updatePromise = currentLlamadaId ? 
             db.collection('llamadas').doc(currentLlamadaId).update({ estado: 'aceptada' }) : 
             Promise.resolve();
@@ -727,7 +837,6 @@ window.contestarLlamada = async function() {
 
         iniciarIceTimeout();
 
-        // 🔧 CONFIGURACIÓN OPTIMIZADA
         activeRoom = await connect(data.token, {
             name: ROOM_NAME,
             audio: { 
@@ -755,10 +864,7 @@ window.contestarLlamada = async function() {
         log('✅ Twilio conectado');
         detenerIceTimeout();
         
-        // Configurar eventos de reconexión
         configurarEventosReconexion(activeRoom);
-        
-        // Iniciar chequeo de tracks
         iniciarCheckeoTracks();
         
         document.getElementById('controls-incoming').classList.add('hidden');
@@ -767,14 +873,31 @@ window.contestarLlamada = async function() {
         setStatus("🟢 CONECTANDO...");
         document.getElementById('avatar').innerText = "🔊";
 
-        activeRoom.participants.forEach(p => participantConnected(p));
-        
-        setTimeout(() => {
+        // 🔥 TIMEOUT SALA VACÍA: 25 segundos
+        emptyRoomTimeout = setTimeout(() => {
             if (activeRoom && activeRoom.participants.size === 0) {
-                log('⚠️ Aún no se conectó el visitante');
-                setStatus("🟡 ESPERANDO VISITANTE...");
+                log('⚠️ Sala vacía por 25s, desconectando...');
+                setStatus("❌ Visitante desconectado");
+                alert('El visitante ya no está disponible');
+                finalizarLlamada(true);
             }
-        }, 2000);
+        }, EMPTY_ROOM_TIMEOUT);
+
+        activeRoom.participants.forEach(p => {
+            clearTimeout(emptyRoomTimeout);
+            emptyRoomTimeout = null;
+            participantConnected(p);
+        });
+        
+        // 🔥 TIMEOUT MÁXIMO DE LLAMADA: 5 minutos
+        maxCallTimeout = setTimeout(() => {
+            if (activeRoom) {
+                log('⏱️ Tiempo máximo de llamada alcanzado (5 min)');
+                setStatus("Tiempo agotado", "Llamada finalizada");
+                alert('⏱️ Llamada finalizada por tiempo máximo (5 min)');
+                finalizarLlamada(true);
+            }
+        }, MAX_CALL_DURATION);
 
     } catch (err) {
         log('❌ Error contestar: ' + err.message);
@@ -784,26 +907,34 @@ window.contestarLlamada = async function() {
 };
 
 // ============================================
-// PARTICIPANTES (OPTIMIZADO CON RECONEXIÓN)
+// 🔥 PARTICIPANTES (CON AUTO-COLGAR)
 // ============================================
 function participantConnected(participant) {
     log(`👤 Participante: ${participant.identity}`);
+    setStatus("🟢 EN LLAMADA");
     
-    // Manejar tracks ya existentes
+    // Cancelar timeout sala vacía
+    if (emptyRoomTimeout) {
+        clearTimeout(emptyRoomTimeout);
+        emptyRoomTimeout = null;
+    }
+    
+    // 🔊 Vibración
+    vibrar([200, 100, 200]);
+    
     participant.tracks.forEach(publication => {
         if (publication.isSubscribed && publication.track.kind === 'audio') {
             handleAudioTrack(publication.track);
         }
     });
     
-    // Manejar nuevos tracks
     participant.on('trackSubscribed', track => {
         if (track.kind === 'audio') {
             handleAudioTrack(track);
         }
     });
     
-    // 🔥 Monitorear calidad de red
+    // Monitorear calidad de red
     participant.on('networkQualityLevelChanged', (quality) => {
         actualizarIndicadorRed(quality);
         
@@ -811,6 +942,20 @@ function participantConnected(participant) {
             log(`⚠️ Red muy débil: ${quality}/5`);
         }
     });
+}
+
+function participantDisconnected(participant) {
+    log('👋 Participante desconectado: ' + participant.identity);
+    
+    // 🔥 AUTO-COLGAR CUANDO VISITANTE SE VA
+    setStatus("Llamada finalizada", "El visitante colgó");
+    
+    // 🔊 Vibración
+    vibrar([200]);
+    
+    setTimeout(() => {
+        finalizarLlamada(true);
+    }, 2000);
 }
 
 function handleAudioTrack(track, forcing = false) {
@@ -828,13 +973,14 @@ function handleAudioTrack(track, forcing = false) {
     
     if (forcing) {
         log('🔧 Track de audio reparado');
-        playBeep(600, 100);
+        playBeep(600, 100, 0.5);
+        vibrar([100]);
     } else {
         log('🔊 Audio del visitante conectado');
         
-        // 🔊🔊 BEEP PRINCIPAL: "YA PUEDEN HABLAR"
+        // 🔊🔊 BEEP PRINCIPAL: 900Hz, 500ms, volumen adaptativo
         playReadyBeep();
-        vibrar([300]);
+        vibrar([200, 100, 200]);
         flashScreen('#27ae60', 500);
         setStatus("🟢 EN LLAMADA");
         document.getElementById('status-text').innerText = "🟢 YA PUEDEN HABLAR";
@@ -866,6 +1012,16 @@ window.finalizarLlamada = async function(disconnect = true) {
     
     detenerCheckeoTracks();
     detenerIceTimeout();
+    
+    // Limpiar timeouts
+    if (emptyRoomTimeout) {
+        clearTimeout(emptyRoomTimeout);
+        emptyRoomTimeout = null;
+    }
+    if (maxCallTimeout) {
+        clearTimeout(maxCallTimeout);
+        maxCallTimeout = null;
+    }
     
     if (window.stopVisualizer) window.stopVisualizer();
     
@@ -938,6 +1094,9 @@ window.toggleMute = function() {
     });
     document.getElementById('btn-mute').classList.toggle('muted', isMuted);
     log(isMuted ? '🔇 Mute ON' : '🔊 Mute OFF');
+    
+    // 🔊 Vibración al mutear/desmutear
+    vibrar([100]);
 };
 
 function setStatus(msg) { 
