@@ -125,6 +125,65 @@ let emptyRoomTimeout = null;
 let maxCallTimeout = null;
 
 // ============================================
+// 🌙 LÓGICA MODO NO MOLESTAR MANUAL (AGREGAR ESTO)
+// ============================================
+let modoNoMolestarForzado = false; 
+
+window.cargarEstadoModoForzado = function() {
+    const guardado = localStorage.getItem('dnd_forced');
+    modoNoMolestarForzado = (guardado === 'true');
+    
+    const toggle = document.getElementById('dnd-toggle');
+    if (toggle) {
+        toggle.checked = modoNoMolestarForzado;
+    }
+    
+    if (modoNoMolestarForzado) {
+        log('🌙 Modo No Molestar: ACTIVADO (Guardado)');
+        setStatus("🌙 No Molestar (Manual)");
+    }
+};
+
+window.toggleModoNoMolestarInput = function() {
+    const toggle = document.getElementById('dnd-toggle');
+    if (!toggle) return;
+
+    modoNoMolestarForzado = toggle.checked;
+    localStorage.setItem('dnd_forced', modoNoMolestarForzado);
+
+    if (modoNoMolestarForzado) {
+        log('🌙 Modo No Molestar ACTIVADO manualmente');
+        setStatus("🌙 No Molestar (Manual)");
+        vibrar([50]); 
+    } else {
+        log('☀️ Modo No Molestar DESACTIVADO');
+        setStatus("✅ Listo para recibir llamadas");
+        vibrar([50]);
+    }
+};
+
+// 2. Función que ejecuta el switch al tocarlo (llamada desde index.html)
+window.toggleModoNoMolestarInput = function() {
+    const toggle = document.getElementById('dnd-toggle');
+    if (!toggle) return;
+
+    modoNoMolestarForzado = toggle.checked;
+    
+    // Guardar en memoria permanente del teléfono
+    localStorage.setItem('dnd_forced', modoNoMolestarForzado);
+
+    if (modoNoMolestarForzado) {
+        log('🌙 Modo No Molestar ACTIVADO manualmente');
+        setStatus("🌙 No Molestar (Manual)");
+        // Feedback visual/táctil
+        if (typeof vibrar === 'function') vibrar([50]); 
+    } else {
+        log('☀️ Modo No Molestar DESACTIVADO');
+        setStatus("✅ Listo para recibir llamadas");
+        if (typeof vibrar === 'function') vibrar([50]);
+    }
+};
+// ============================================
 // LOGS VISIBLES
 // ============================================
 function log(msg) {
@@ -295,22 +354,27 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ============================================
-// 🔥 MODO NO MOLESTAR (20:00 - 8:00)
+// 🔥 MODO NO MOLESTAR (Horario O Manual)
 // ============================================
 function estaEnModoNoMolestar() {
+    // 1. Primero miramos si el botón manual está activado
+    if (modoNoMolestarForzado) {
+        log('🌙 Bloqueo: Modo manual activo');
+        return true;
+    }
+
+    // 2. Si no, miramos el horario
     const ahora = new Date();
     const hora = ahora.getHours();
     
-    // Entre 20:00 y 23:59 O entre 00:00 y 7:59
-    const enModoNoMolestar = hora >= DO_NOT_DISTURB_START || hora < DO_NOT_DISTURB_END;
+    const enHorarioNoMolestar = hora >= DO_NOT_DISTURB_START || hora < DO_NOT_DISTURB_END;
     
-    if (enModoNoMolestar) {
-        log(`🌙 Modo No Molestar (${hora}:00 - Fuera de horario 8:00-20:00)`);
+    if (enHorarioNoMolestar) {
+        log(`🌙 Bloqueo: Horario nocturno (${hora}:00)`);
     }
     
-    return enModoNoMolestar;
+    return enHorarioNoMolestar;
 }
-
 // ============================================
 // 🔥 AJUSTE DINÁMICO DE BITRATE
 // ============================================
