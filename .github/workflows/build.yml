@@ -38,15 +38,15 @@ jobs:
       run: |
         MANIFEST="android/app/src/main/AndroidManifest.xml"
         
-        # 🔥 TODOS LOS PERMISOS NECESARIOS (incluyendo Full Screen Intent y Vibración)
+        # 🔥 TODOS LOS PERMISOS NECESARIOS
         PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.CAMERA" /><uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.FOREGROUND_SERVICE" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" /><uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" /><uses-feature android:name="android.hardware.camera" android:required="false" />'
         
         # Insertar permisos antes de <application>
         sed -i "s|<application|$PERMISSIONS<application|g" $MANIFEST
         
-        # 🔥 MODIFICAR <activity> PARA FULL SCREEN INTENT
-        # Esto hace que la app se abra sobre todo, incluso con pantalla bloqueada
-        sed -i 's|<activity|<activity android:launchMode="singleTask" android:showWhenLocked="true" android:turnScreenOn="true" android:excludeFromRecents="false" android:showForAllUsers="true"|' $MANIFEST
+        # 🔥 REEMPLAZAR TODA LA LÍNEA DE <activity> (no agregar)
+        # Buscar línea que contiene <activity y reemplazarla completamente
+        sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleTask" android:showWhenLocked="true" android:turnScreenOn="true" android:excludeFromRecents="false" android:showForAllUsers="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
         
         echo "--- MANIFEST MODIFICADO ---"
         cat $MANIFEST
