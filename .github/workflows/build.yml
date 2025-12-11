@@ -33,16 +33,20 @@ jobs:
     - name: Add Android platform
       run: npx cap add android || true 
 
-    # --- INYECCIÓN DE PERMISOS (VERSIÓN HARDCORE) ---
-    - name: Inject Permissions into Manifest
+    # 🔥 INYECCIÓN COMPLETA DE PERMISOS Y CONFIGURACIÓN
+    - name: Inject Permissions and Configuration into Manifest
       run: |
         MANIFEST="android/app/src/main/AndroidManifest.xml"
         
-        # Permisos necesarios: Internet, Camara, Audio, Full Screen (Llamada), Wake Lock, y Foreground Service (Background Mode)
-        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.CAMERA" /><uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.FOREGROUND_SERVICE" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" /><uses-feature android:name="android.hardware.camera" />'
+        # 🔥 TODOS LOS PERMISOS NECESARIOS (incluyendo Full Screen Intent y Vibración)
+        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.CAMERA" /><uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.FOREGROUND_SERVICE" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" /><uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" /><uses-feature android:name="android.hardware.camera" android:required="false" />'
         
-        # Insertamos antes de <application>
-        sed -i "s|<application|$PERMISSIONS <application|g" $MANIFEST
+        # Insertar permisos antes de <application>
+        sed -i "s|<application|$PERMISSIONS<application|g" $MANIFEST
+        
+        # 🔥 MODIFICAR <activity> PARA FULL SCREEN INTENT
+        # Esto hace que la app se abra sobre todo, incluso con pantalla bloqueada
+        sed -i 's|<activity|<activity android:launchMode="singleTask" android:showWhenLocked="true" android:turnScreenOn="true" android:excludeFromRecents="false" android:showForAllUsers="true"|' $MANIFEST
         
         echo "--- MANIFEST MODIFICADO ---"
         cat $MANIFEST
