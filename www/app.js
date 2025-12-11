@@ -580,6 +580,9 @@ window.iniciarApp = async function() {
         updateNetworkStatus('online', 'En Línea');
         log('✅ APP LISTA');
         
+        // 🎛️ Cargar estado del toggle
+        cargarEstadoModoForzado();
+        
         // 🔥 TEST DE VIBRACIÓN
         setTimeout(() => {
             log('🧪 Probando vibración...');
