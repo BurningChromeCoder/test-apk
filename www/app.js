@@ -33,7 +33,7 @@ async function initApp() {
 // ============================================
 // IMPORTACIONES CON TRY-CATCH
 // ============================================
-let connect, PushNotifications;
+let connect, PushNotifications, Haptics;
 
 try {
     const twilioModule = await import('twilio-video');
@@ -50,6 +50,14 @@ try {
     console.log('✅ Capacitor cargado');
 } catch (e) {
     console.log('⚠️ Capacitor no disponible (normal en web)');
+}
+
+try {
+    const hapticsModule = await import('@capacitor/haptics');
+    Haptics = hapticsModule.Haptics;
+    console.log('✅ Haptics cargado');
+} catch (e) {
+    console.log('⚠️ Haptics no disponible');
 }
 
 // ============================================
@@ -207,11 +215,25 @@ function playWarningBeep() {
     playBeep(400, 200, 0.5);
 }
 
-// 🔥 VIBRACIÓN: Patrón medio [200, 100, 200]
-function vibrar(pattern = [200, 100, 200]) {
+// 🔥 VIBRACIÓN: Nativa + Fallback Web
+async function vibrar(pattern = [200, 100, 200]) {
+    try {
+        // Intento 1: Haptics Nativo (más confiable)
+        if (Haptics) {
+            await Haptics.vibrate({ duration: 200 });
+            log('📳 Vibración Nativa');
+            return;
+        }
+    } catch (e) {
+        log('⚠️ Haptics falló: ' + e.message);
+    }
+    
+    // Intento 2: Web API (fallback)
     if ('vibrate' in navigator) {
         navigator.vibrate(pattern);
-        log(`📳 Vibración: ${JSON.stringify(pattern)}`);
+        log('📳 Vibración Web');
+    } else {
+        log('⚠️ Vibración no soportada');
     }
 }
 
