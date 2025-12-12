@@ -1,15 +1,15 @@
 import { Haptics } from '@capacitor/haptics';
+import { registerPlugin } from '@capacitor/core';
 
-// ============================================
-// CAPTURA DE ERRORES GLOBAL
-// ============================================
+const WakeLock = registerPlugin('WakeLock');
+const CallPlugin = registerPlugin('CallPlugin');
+
 window.addEventListener('error', function(e) {
     const errorDiv = document.getElementById('console-log');
     if (errorDiv) {
         errorDiv.innerHTML = `<div style="color:red;">❌ ERROR: ${e.message}<br>Archivo: ${e.filename}<br>Línea: ${e.lineno}</div>` + errorDiv.innerHTML;
     }
     console.error('ERROR CAPTURADO:', e);
-    alert('ERROR: ' + e.message + '\nVer consola en pantalla');
 });
 
 window.addEventListener('unhandledrejection', function(e) {
@@ -20,9 +20,6 @@ window.addEventListener('unhandledrejection', function(e) {
     console.error('PROMISE ERROR:', e);
 });
 
-// ============================================
-// ESPERAR A QUE EL DOM ESTÉ LISTO
-// ============================================
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initApp);
 } else {
@@ -32,10 +29,7 @@ if (document.readyState === 'loading') {
 async function initApp() {
     console.log('🚀 Iniciando carga de módulos...');
 
-// ============================================
-// IMPORTACIONES CON TRY-CATCH
-// ============================================
-let connect, PushNotifications, Haptics;
+let connect, PushNotifications;
 
 try {
     const twilioModule = await import('twilio-video');
@@ -54,17 +48,6 @@ try {
     console.log('⚠️ Capacitor no disponible (normal en web)');
 }
 
-try {
-    const hapticsModule = await import('@capacitor/haptics');
-    Haptics = hapticsModule.Haptics;
-    console.log('✅ Haptics cargado');
-} catch (e) {
-    console.log('⚠️ Haptics no disponible');
-}
-
-// ============================================
-// FIREBASE CON TRY-CATCH
-// ============================================
 let db;
 try {
     if (typeof firebase !== 'undefined') {
@@ -89,24 +72,17 @@ try {
     console.error('Firebase error:', e);
 }
 
-// ============================================
-// CONFIGURACIÓN (TUS ESPECIFICACIONES)
-// ============================================
 const MY_ID = "puerta-admin-v2"; 
 const ROOM_NAME = 'sala-principal'; 
-
-const API_URL_REGISTRO  = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
-const API_URL_TOKEN     = 'https://us-central1-puerta-c3a71.cloudfunctions.net/obtenerTokenTwilio';
-
-const MAX_REINTENTOS = 5; // 🔥 5 intentos
-const REINTENTO_DELAY = 1000; // 🔥 1 segundo
+const API_URL_REGISTRO = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
+const API_URL_TOKEN = 'https://us-central1-puerta-c3a71.cloudfunctions.net/obtenerTokenTwilio';
+const MAX_REINTENTOS = 5;
+const REINTENTO_DELAY = 1000;
 const ICE_TIMEOUT = 10000;
-const EMPTY_ROOM_TIMEOUT = 25000; // 🔥 25 segundos
-const MAX_CALL_DURATION = 300000; // 🔥 5 minutos
-
-// 🔥 MODO NO MOLESTAR: 20:00 - 8:00
-const DO_NOT_DISTURB_START = 20; // 8 PM
-const DO_NOT_DISTURB_END = 8; // 8 AM
+const EMPTY_ROOM_TIMEOUT = 25000;
+const MAX_CALL_DURATION = 300000;
+const DO_NOT_DISTURB_START = 20;
+const DO_NOT_DISTURB_END = 8;
 
 let activeRoom = null;
 let currentLlamadaId = null; 
@@ -123,21 +99,28 @@ let isReconnecting = false;
 let audioBeepContext = null;
 let emptyRoomTimeout = null;
 let maxCallTimeout = null;
+let modoNoMolestarForzado = false;
+let isProcessingCall = false;
+let lastCallTimestamp = 0;
 
-// ============================================
-// 🌙 LÓGICA MODO NO MOLESTAR MANUAL (AGREGAR ESTO)
-// ============================================
-let modoNoMolestarForzado = false; 
+if (window.Capacitor) {
+    CallPlugin.addListener('callStateChanged', (data) => {
+        log('📞 Estado llamada nativa: ' + data.action);
+        if (data.action === 'answered') {
+            log('✅ Usuario contestó desde UI nativa');
+            contestarLlamada();
+        } else if (data.action === 'rejected') {
+            log('❌ Usuario rechazó desde UI nativa');
+            rechazarLlamada();
+        }
+    });
+}
 
 window.cargarEstadoModoForzado = function() {
     const guardado = localStorage.getItem('dnd_forced');
     modoNoMolestarForzado = (guardado === 'true');
-    
     const toggle = document.getElementById('dnd-toggle');
-    if (toggle) {
-        toggle.checked = modoNoMolestarForzado;
-    }
-    
+    if (toggle) toggle.checked = modoNoMolestarForzado;
     if (modoNoMolestarForzado) {
         log('🌙 Modo No Molestar: ACTIVADO (Guardado)');
         setStatus("🌙 No Molestar (Manual)");
@@ -147,10 +130,8 @@ window.cargarEstadoModoForzado = function() {
 window.toggleModoNoMolestarInput = function() {
     const toggle = document.getElementById('dnd-toggle');
     if (!toggle) return;
-
     modoNoMolestarForzado = toggle.checked;
     localStorage.setItem('dnd_forced', modoNoMolestarForzado);
-
     if (modoNoMolestarForzado) {
         log('🌙 Modo No Molestar ACTIVADO manualmente');
         setStatus("🌙 No Molestar (Manual)");
@@ -162,30 +143,6 @@ window.toggleModoNoMolestarInput = function() {
     }
 };
 
-// 2. Función que ejecuta el switch al tocarlo (llamada desde index.html)
-window.toggleModoNoMolestarInput = function() {
-    const toggle = document.getElementById('dnd-toggle');
-    if (!toggle) return;
-
-    modoNoMolestarForzado = toggle.checked;
-    
-    // Guardar en memoria permanente del teléfono
-    localStorage.setItem('dnd_forced', modoNoMolestarForzado);
-
-    if (modoNoMolestarForzado) {
-        log('🌙 Modo No Molestar ACTIVADO manualmente');
-        setStatus("🌙 No Molestar (Manual)");
-        // Feedback visual/táctil
-        if (typeof vibrar === 'function') vibrar([50]); 
-    } else {
-        log('☀️ Modo No Molestar DESACTIVADO');
-        setStatus("✅ Listo para recibir llamadas");
-        if (typeof vibrar === 'function') vibrar([50]);
-    }
-};
-// ============================================
-// LOGS VISIBLES
-// ============================================
 function log(msg) {
     const logDiv = document.getElementById('console-log');
     if(logDiv) {
@@ -195,45 +152,28 @@ function log(msg) {
     console.log(`[App] ${msg}`);
 }
 
-log('📄 app.js ejecutándose...');
+log('📄 app.js V11.0 ejecutándose...');
 
-// ============================================
-// 🔊 SISTEMA DE BEEPS Y FEEDBACK
-// ============================================
 function inicializarAudioContext() {
     if (!audioBeepContext) {
         audioBeepContext = new (window.AudioContext || window.webkitAudioContext)();
     }
 }
 
-// 🔥 VOLUMEN ADAPTATIVO SEGÚN RUIDO AMBIENTE
 async function getAmbientVolume() {
     if (!audioBeepContext) return 0.7;
-    
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const analyser = audioBeepContext.createAnalyser();
         const source = audioBeepContext.createMediaStreamSource(stream);
         source.connect(analyser);
-        
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         analyser.getByteFrequencyData(dataArray);
-        
         const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        
         stream.getTracks().forEach(t => t.stop());
-        
-        if (avg > 50) {
-            log('🔊 Ambiente ruidoso: volumen 0.9');
-            return 0.9;
-        }
-        if (avg > 30) {
-            log('🔊 Ambiente medio: volumen 0.7');
-            return 0.7;
-        }
-        log('🔊 Ambiente silencioso: volumen 0.5');
+        if (avg > 50) return 0.9;
+        if (avg > 30) return 0.7;
         return 0.5;
-        
     } catch (e) {
         return 0.7;
     }
@@ -241,27 +181,18 @@ async function getAmbientVolume() {
 
 function playBeep(frequency, duration, volume = 0.7) {
     inicializarAudioContext();
-    if (audioBeepContext.state === 'suspended') {
-        audioBeepContext.resume();
-    }
-    
+    if (audioBeepContext.state === 'suspended') audioBeepContext.resume();
     const oscillator = audioBeepContext.createOscillator();
     const gainNode = audioBeepContext.createGain();
-    
     oscillator.connect(gainNode);
     gainNode.connect(audioBeepContext.destination);
-    
     oscillator.frequency.value = frequency;
     oscillator.type = 'sine';
     gainNode.gain.value = volume;
-    
     oscillator.start(audioBeepContext.currentTime);
     oscillator.stop(audioBeepContext.currentTime + duration / 1000);
-    
-    log(`🔊 Beep: ${frequency}Hz, vol: ${volume}`);
 }
 
-// 🔥 BEEP PRINCIPAL: 900Hz, 500ms, volumen adaptativo
 async function playReadyBeep() {
     const volume = await getAmbientVolume();
     playBeep(900, 500, volume);
@@ -276,10 +207,8 @@ function playWarningBeep() {
     playBeep(400, 200, 0.5);
 }
 
-// 🔥 VIBRACIÓN: Nativa + Fallback Web
 async function vibrar(pattern = [200, 100, 200]) {
     try {
-        // Intento 1: Haptics Nativo (más confiable)
         if (Haptics) {
             await Haptics.vibrate({ duration: 200 });
             log('📳 Vibración Nativa');
@@ -288,62 +217,62 @@ async function vibrar(pattern = [200, 100, 200]) {
     } catch (e) {
         log('⚠️ Haptics falló: ' + e.message);
     }
-    
-    // Intento 2: Web API (fallback)
     if ('vibrate' in navigator) {
         navigator.vibrate(pattern);
         log('📳 Vibración Web');
-    } else {
-        log('⚠️ Vibración no soportada');
     }
 }
 
 function flashScreen(color, duration = 300) {
     const flash = document.createElement('div');
-    flash.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: ${color};
-        opacity: 0.3;
-        z-index: 9999;
-        pointer-events: none;
-        animation: fadeOut ${duration}ms ease-out;
-    `;
+    flash.style.cssText = `position: fixed;top: 0;left: 0;width: 100%;height: 100%;background: ${color};opacity: 0.3;z-index: 9999;pointer-events: none;animation: fadeOut ${duration}ms ease-out;`;
     document.body.appendChild(flash);
     setTimeout(() => flash.remove(), duration);
 }
 
 const style = document.createElement('style');
-style.textContent = `
-    @keyframes fadeOut {
-        0% { opacity: 0.3; }
-        100% { opacity: 0; }
-    }
-`;
+style.textContent = `@keyframes fadeOut {0% { opacity: 0.3; }100% { opacity: 0; }}`;
 document.head.appendChild(style);
 
-/* --- EVENTO RESUME --- */
 document.addEventListener('resume', () => {
     log('☀️ APP EN PRIMER PLANO');
     requestWakeLock();
     if(window.Capacitor && PushNotifications) PushNotifications.removeAllDeliveredNotifications();
 }, false);
 
-// ============================================
-// WAKE LOCK
-// ============================================
 async function requestWakeLock() {
+    if (window.Capacitor) {
+        try {
+            await WakeLock.acquire();
+            log('🔒 Wake Lock NATIVO activado');
+        } catch (err) {
+            log('⚠️ Wake Lock nativo falló: ' + err.message);
+        }
+    }
     if (document.visibilityState !== 'visible') return;
     try {
         if ('wakeLock' in navigator) {
             wakeLock = await navigator.wakeLock.request('screen');
-            log('🔒 Wake Lock activado');
+            log('🔒 Wake Lock WEB activado');
         }
     } catch (err) {
-        log('⚠️ Wake Lock no disponible');
+        log('⚠️ Wake Lock web no disponible');
+    }
+}
+
+async function releaseWakeLock() {
+    if (window.Capacitor) {
+        try {
+            await WakeLock.release();
+            log('🔓 Wake Lock nativo liberado');
+        } catch (err) {}
+    }
+    if (wakeLock) {
+        try {
+            await wakeLock.release();
+            wakeLock = null;
+            log('🔓 Wake Lock web liberado');
+        } catch (err) {}
     }
 }
 
@@ -353,35 +282,23 @@ document.addEventListener('visibilitychange', async () => {
     }
 });
 
-// ============================================
-// 🔥 MODO NO MOLESTAR (Horario O Manual)
-// ============================================
 function estaEnModoNoMolestar() {
-    // 1. Primero miramos si el botón manual está activado
     if (modoNoMolestarForzado) {
         log('🌙 Bloqueo: Modo manual activo');
         return true;
     }
-
-    // 2. Si no, miramos el horario
     const ahora = new Date();
     const hora = ahora.getHours();
-    
     const enHorarioNoMolestar = hora >= DO_NOT_DISTURB_START || hora < DO_NOT_DISTURB_END;
-    
     if (enHorarioNoMolestar) {
         log(`🌙 Bloqueo: Horario nocturno (${hora}:00)`);
     }
-    
     return enHorarioNoMolestar;
 }
-// ============================================
-// 🔥 AJUSTE DINÁMICO DE BITRATE
-// ============================================
+
 function ajustarBitrate(newBitrate) {
     if (currentBitrate === newBitrate || !activeRoom) return;
     currentBitrate = newBitrate;
-    
     activeRoom.localParticipant.audioTracks.forEach(publication => {
         const track = publication.track;
         if (track) {
@@ -394,13 +311,9 @@ function ajustarBitrate(newBitrate) {
             }).catch(e => log("⚠️ Error ajustando bitrate: " + e.message));
         }
     });
-    
     log(`🔧 Bitrate ajustado a ${newBitrate/1000}kbps`);
 }
 
-// ============================================
-// 🔥 INDICADOR DE CALIDAD DE RED
-// ============================================
 function actualizarIndicadorRed(quality) {
     const qualityMap = {
         5: '⚡ Excelente',
@@ -410,73 +323,50 @@ function actualizarIndicadorRed(quality) {
         1: '❌ Mala',
         0: '❌ Sin señal'
     };
-    
     updateNetworkStatus(quality >= 3 ? 'online' : 'offline', qualityMap[quality] || 'Desconocida');
-    
-    // 🔊 Beep + vibración si red muy mala
     if (quality <= 2) {
         playWarningBeep();
         vibrar([200]);
     }
-    
-    if (quality === 1) {
-        ajustarBitrate(16000);
-    } else if (quality === 2) {
-        ajustarBitrate(24000);
-    } else if (quality === 3) {
-        ajustarBitrate(32000);
-    } else {
-        ajustarBitrate(40000);
-    }
+    if (quality === 1) ajustarBitrate(16000);
+    else if (quality === 2) ajustarBitrate(24000);
+    else if (quality === 3) ajustarBitrate(32000);
+    else ajustarBitrate(40000);
 }
 
-// ============================================
-// 🔥 EVENTOS DE RECONEXIÓN
-// ============================================
 function configurarEventosReconexion(room) {
     room.on('reconnecting', (error) => {
         isReconnecting = true;
         log('🔄 Reconectando... (' + error.message + ')');
         setStatus("🔄 RECONECTANDO...");
         document.getElementById('avatar').innerText = "🔄";
-        
-        // 🔊 Vibración
         vibrar([200, 100, 200]);
     });
-
     room.on('reconnected', () => {
         isReconnecting = false;
         reconexionIntentos = 0;
         log('✅ Reconexión exitosa');
         setStatus("🟢 EN LLAMADA");
         document.getElementById('avatar').innerText = "🔊";
-        
-        // 🔊 Doble beep + vibración
         playDoubleBeep();
         vibrar([100, 50, 100, 50, 100]);
         flashScreen('#27ae60', 400);
     });
-
     room.on('disconnected', (room, error) => {
         log('❌ Desconectado: ' + (error ? error.message : 'Normal'));
-        
         if (!error) {
             finalizarLlamada(false);
             return;
         }
-
-        // 🔥 5 INTENTOS CON 1 SEGUNDO DE DELAY
         if (esErrorRecuperable(error) && reconexionIntentos < MAX_REINTENTOS) {
             reconexionIntentos++;
             log(`🔄 Intento ${reconexionIntentos}/${MAX_REINTENTOS}...`);
             setTimeout(() => intentarReconexion(), REINTENTO_DELAY);
         } else {
             setStatus("❌ Desconectado");
-            // 🔥 RECARGAR PÁGINA
             setTimeout(() => location.reload(), 3000);
         }
     });
-
     room.on('participantConnected', p => participantConnected(p));
     room.on('participantDisconnected', participantDisconnected);
 }
@@ -486,61 +376,40 @@ function esErrorRecuperable(error) {
     return error && recuperableCodes.includes(error.code);
 }
 
-// ============================================
-// 🔥 INTENTAR RECONEXIÓN COMPLETA
-// ============================================
 async function intentarReconexion() {
     try {
         log('🔄 Reconectando sala completa...');
         setStatus("🔄 RECONECTANDO...");
-        
         if (activeRoom) {
             activeRoom.disconnect();
             activeRoom = null;
         }
-
         const res = await fetch(API_URL_TOKEN, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ identidad: 'Admin-' + Date.now(), sala: ROOM_NAME })
         });
-        
         if(!res.ok) throw new Error('Error token: ' + res.status);
         const data = await res.json();
-
         activeRoom = await connect(data.token, {
             name: ROOM_NAME,
             audio: { 
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-                googEchoCancellation: true,
-                googAutoGainControl: true,
-                googNoiseSuppression: true,
-                googHighpassFilter: false,
-                googTypingNoiseDetection: false
+                echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+                googEchoCancellation: true, googAutoGainControl: true, googNoiseSuppression: true,
+                googHighpassFilter: false, googTypingNoiseDetection: false
             },
             video: false,
             preferredAudioCodecs: ['opus'],
             maxAudioBitrate: 40000,
             networkQuality: { local: 1, remote: 1 },
-            bandwidthProfile: {
-                video: {
-                    mode: 'collaboration',
-                    dominantSpeakerPriority: 'high'
-                }
-            }
+            bandwidthProfile: { video: { mode: 'collaboration', dominantSpeakerPriority: 'high' }}
         });
-
         configurarEventosReconexion(activeRoom);
         activeRoom.participants.forEach(p => participantConnected(p));
-        
         log('✅ Reconexión completa exitosa');
         setStatus("🟢 EN LLAMADA");
-        
     } catch (e) {
         log('❌ Reconexión falló: ' + e.message);
-        
         if (reconexionIntentos < MAX_REINTENTOS) {
             reconexionIntentos++;
             setTimeout(() => intentarReconexion(), REINTENTO_DELAY);
@@ -551,17 +420,11 @@ async function intentarReconexion() {
     }
 }
 
-// ============================================
-// 🔥 CHEQUEO DE SALUD DE TRACKS
-// ============================================
 function iniciarCheckeoTracks() {
     if (trackHealthCheck) clearInterval(trackHealthCheck);
-    
     trackHealthCheck = setInterval(() => {
         if (!activeRoom || isReconnecting) return;
-        
         let tracksOk = true;
-        
         activeRoom.participants.forEach(participant => {
             participant.audioTracks.forEach(publication => {
                 const track = publication.track;
@@ -571,7 +434,6 @@ function iniciarCheckeoTracks() {
                 }
             });
         });
-        
         if (!tracksOk && !isReconnecting) {
             log('🔧 Reparando tracks...');
             activeRoom.participants.forEach(p => {
@@ -592,12 +454,8 @@ function detenerCheckeoTracks() {
     }
 }
 
-// ============================================
-// 🔥 TIMEOUT ICE CONNECTION
-// ============================================
 function iniciarIceTimeout() {
     if (iceTimeoutTimer) clearTimeout(iceTimeoutTimer);
-    
     iceTimeoutTimer = setTimeout(() => {
         if (activeRoom && activeRoom.state === 'connecting') {
             log('❌ ICE connection timeout');
@@ -613,15 +471,10 @@ function detenerIceTimeout() {
     }
 }
 
-// ============================================
-// INICIALIZACIÓN
-// ============================================
 window.iniciarApp = async function() {
     try {
-        log('🚀 INICIANDO V9.0 FINAL...');
-        
+        log('🚀 INICIANDO V11.0 CON CONNECTIONSERVICE...');
         inicializarAudioContext();
-        
         const requiredElements = ['console-log', 'status-text', 'avatar', 'controls-incoming', 'controls-active'];
         for (const id of requiredElements) {
             if (!document.getElementById(id)) {
@@ -629,33 +482,39 @@ window.iniciarApp = async function() {
             }
         }
         log('✅ DOM verificado');
-        
         try {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             log('✅ Audio Context creado');
         } catch (e) {
             log('⚠️ Audio Context error: ' + e.message);
         }
-        
         const onboarding = document.getElementById('onboarding');
         if(onboarding) {
             onboarding.style.opacity = '0';
             setTimeout(() => onboarding.remove(), 500);
             log('✅ Onboarding removido');
         }
-        
         await requestWakeLock();
-        
         if (window.Capacitor) {
             log('📱 Modo Capacitor detectado');
+            try {
+                const perms = await CallPlugin.checkPermissions();
+                if (!perms.allGranted) {
+                    log('📱 Solicitando permisos de teléfono...');
+                    await CallPlugin.requestPermissions();
+                    log('✅ Permisos de teléfono otorgados');
+                } else {
+                    log('✅ Permisos de teléfono ya otorgados');
+                }
+            } catch (e) {
+                log('⚠️ Error permisos teléfono: ' + e.message);
+            }
             await iniciarCapacitor();
         } else {
             log('🌐 Modo Web detectado');
         }
-        
         iniciarVisualizador();
         activarModoSegundoPlano();
-
         if (db) {
             log('🔥 Iniciando Firebase listener...');
             iniciarEscuchaFirebase();
@@ -663,19 +522,13 @@ window.iniciarApp = async function() {
         } else {
             throw new Error('Firebase no está disponible');
         }
-
         setStatus("✅ Listo para recibir llamadas");
         updateNetworkStatus('online', 'En Línea');
-        log('✅ APP LISTA');
-        
-        // 🎛️ Cargar estado del toggle
+        log('✅ APP LISTA CON CONNECTIONSERVICE');
         cargarEstadoModoForzado();
-        
-        // 🔥 TEST DE VIBRACIÓN
         setTimeout(() => {
             log('🧪 Probando vibración...');
             vibrar([200]);
-            
             setTimeout(() => {
                 const resultado = confirm('¿Sentiste la vibración?\n(Presiona OK si sí, Cancelar si no)');
                 if (!resultado) {
@@ -686,7 +539,6 @@ window.iniciarApp = async function() {
                 }
             }, 1000);
         }, 1000);
-        
     } catch (e) { 
         log('❌ ERROR CRÍTICO: ' + e.message);
         alert("Error inicialización: " + e.message);
@@ -694,59 +546,39 @@ window.iniciarApp = async function() {
     }
 };
 
-// ============================================
-// FIREBASE LISTENER (CON MODO NO MOLESTAR)
-// ============================================
 function iniciarEscuchaFirebase() {
     try {
         log('👂 Configurando listener Firebase...');
-        
-        if (firestoreUnsubscribe) {
-            firestoreUnsubscribe();
-        }
-        
+        if (firestoreUnsubscribe) firestoreUnsubscribe();
         const query = db.collection('llamadas').where('sala', '==', ROOM_NAME);
-        
         firestoreUnsubscribe = query.onSnapshot((snapshot) => {
             log(`🔔 Firebase: ${snapshot.size} llamada(s)`);
-            
             snapshot.docChanges().forEach((change) => {
                 if (change.type === 'added' || change.type === 'modified') {
                     const data = change.doc.data();
                     const id = change.doc.id;
-                    
-                    if (data.estado !== 'pendiente' && data.estado !== 'llamando') {
+                    if (data.estado !== 'pendiente' && data.estado !== 'llamando') return;
+                    if (currentLlamadaId === id) {
+                        log('⚠️ Llamada ya en proceso, ignorando duplicado Firestore');
                         return;
                     }
-                    
-                    // 🔥 VERIFICAR MODO NO MOLESTAR
                     if (estaEnModoNoMolestar()) {
                         log(`🌙 Llamada bloqueada (Modo No Molestar)`);
-                        
-                        // Rechazar automáticamente
                         db.collection('llamadas').doc(id).delete()
                           .then(() => log('🗑️ Llamada rechazada (fuera de horario)'))
                           .catch(e => log('⚠️ Error: ' + e.message));
-                        
-                        // Mostrar notificación silenciosa
                         setStatus("🌙 Fuera de horario (20:00-8:00)");
                         setTimeout(() => setStatus("✅ Listo para recibir llamadas"), 3000);
-                        
-                        return; // No procesar la llamada
+                        return;
                     }
-                    
-                    log(`🚨 LLAMADA: ${id} (${data.estado})`);
-                    
+                    log(`🚨 LLAMADA FIRESTORE: ${id} (${data.estado})`);
                     if (!activeRoom && !ringtoneOscillator) {
                         currentLlamadaId = id;
                         startRinging();
                         setStatus("🔔 TIMBRE SONANDO");
                         document.getElementById('avatar').innerText = "🔔";
                         document.getElementById('controls-incoming').classList.remove('hidden');
-                        
-                        // 🔊 Vibración
                         vibrar([200, 100, 200, 100, 200]);
-                        
                         traerAlFrente();
                     }
                 }
@@ -754,16 +586,12 @@ function iniciarEscuchaFirebase() {
         }, (error) => {
             log('❌ Error Firebase listener: ' + error.message);
         });
-        
         log('✅ Listener Firebase activo');
     } catch (e) {
         log('❌ Error configurando listener: ' + e.message);
     }
 }
 
-// ============================================
-// LIMPIEZA
-// ============================================
 function iniciarLimpiezaAutomatica() {
     log('🧹 Sistema limpieza activado');
     setTimeout(limpiarLlamadasViejas, 5000);
@@ -772,32 +600,21 @@ function iniciarLimpiezaAutomatica() {
 
 async function limpiarLlamadasViejas() {
     try {
-        const cincominutosAtras = firebase.firestore.Timestamp.fromDate(
-            new Date(Date.now() - 5 * 60 * 1000)
-        );
-        
-        const snapshot = await db.collection('llamadas')
-            .where('timestamp', '<', cincominutosAtras)
-            .get();
-        
+        const cincominutosAtras = firebase.firestore.Timestamp.fromDate(new Date(Date.now() - 5 * 60 * 1000));
+        const snapshot = await db.collection('llamadas').where('timestamp', '<', cincominutosAtras).get();
         if (snapshot.empty) {
             log('✅ BD limpia');
             return;
         }
-        
         const batch = db.batch();
         snapshot.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
-        
         log(`🗑️ ${snapshot.size} llamada(s) eliminada(s)`);
     } catch (error) {
         log('⚠️ Error limpieza: ' + error.message);
     }
 }
 
-// ============================================
-// MODO SEGUNDO PLANO
-// ============================================
 function activarModoSegundoPlano() {
     document.addEventListener('deviceready', () => {
         if (window.cordova && window.cordova.plugins && window.cordova.plugins.backgroundMode) {
@@ -808,15 +625,11 @@ function activarModoSegundoPlano() {
     }, false);
 }
 
-// ============================================
-// NOTIFICACIONES
-// ============================================
 async function iniciarCapacitor() {
     if (!PushNotifications) {
         log('⚠️ PushNotifications no disponible');
         return;
     }
-    
     try {
         let perm = await PushNotifications.checkPermissions();
         if (perm.receive === 'prompt') {
@@ -826,62 +639,79 @@ async function iniciarCapacitor() {
             log('⚠️ Permisos push denegados');
             return;
         }
-
         await PushNotifications.createChannel({
-            id: 'timbre_urgente',       
-            name: 'Timbre Puerta',
-            importance: 5,
-            visibility: 1,
-            vibration: true,
-            sound: 'default'
+            id: 'timbre_urgente', name: 'Timbre Puerta', importance: 5, visibility: 1, vibration: true, sound: 'default'
         });
-
         await PushNotifications.register();
         log('✅ Push notifications registradas');
-
         PushNotifications.addListener('registration', async (token) => {
             log('📲 Token: ' + token.value.substring(0, 20) + '...');
             await registrarEnServidor(token.value);
         });
-
         PushNotifications.addListener('pushNotificationReceived', (notification) => {
-            log('🔔 Push recibida');
+            log('🔔 Push recibida en foreground');
+            if (currentLlamadaId) {
+                log('⚠️ Llamada ya procesada por Firestore, ignorando push');
+                return;
+            }
+            log('📞 Procesando llamada desde push');
             traerAlFrente();
         });
-
+        PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
+            log('👆 Usuario tocó notificación push');
+            traerAlFrente();
+        });
     } catch (e) { 
         log('❌ Error Push: ' + e.message); 
     }
 }
 
-function traerAlFrente() {
-    log('🚀 Intentando traer app al frente...');
-    
+async function traerAlFrente() {
+    const now = Date.now();
+    if (isProcessingCall && (now - lastCallTimestamp) < 5000) {
+        log('⚠️ Llamada ya en proceso, ignorando duplicado');
+        return;
+    }
+    isProcessingCall = true;
+    lastCallTimestamp = now;
+    log('🚀 Trayendo app al frente...');
+    if (window.Capacitor) {
+        try {
+            const perms = await CallPlugin.checkPermissions();
+            if (!perms.allGranted) {
+                log('⚠️ Pidiendo permisos de teléfono...');
+                await CallPlugin.requestPermissions();
+            }
+            await CallPlugin.showIncomingCall();
+            log('✅ LLAMADA NATIVA MOSTRADA');
+            setTimeout(() => { isProcessingCall = false; }, 5000);
+            return;
+        } catch (e) {
+            log('⚠️ CallPlugin falló: ' + e.message);
+        }
+    }
+    await requestWakeLock();
     if (window.cordova?.plugins?.backgroundMode) {
         const bg = window.cordova.plugins.backgroundMode;
         bg.wakeUp();
         bg.unlock();
         bg.moveToForeground();
-        log('✅ Background mode: moveToForeground');
+        log('✅ Background mode activado');
     }
-    
     if (window.Capacitor) {
         try {
             window.dispatchEvent(new Event('focus'));
             window.focus();
-            log('✅ Window focus triggered');
+            log('✅ Window focus activado');
         } catch (e) {
             log('⚠️ Focus error: ' + e.message);
         }
     }
-    
-    requestWakeLock();
-    
     vibrar([500, 200, 500, 200, 500]);
-    
     if (audioBeepContext) {
         playBeep(800, 100, 0.7);
     }
+    setTimeout(() => { isProcessingCall = false; }, 5000);
 }
 
 async function registrarEnServidor(token) {
@@ -897,74 +727,47 @@ async function registrarEnServidor(token) {
     }
 }
 
-// ============================================
-// 🔥 CONTESTAR (CON TODOS LOS TIMEOUTS)
-// ============================================
 window.contestarLlamada = async function() {
     log('📞 Contestando...');
     stopRinging();
-
-    // 🔊 Vibración
     vibrar([200, 100, 200]);
     flashScreen('#2ecc71', 300);
-
     try {
-        // Operaciones en paralelo
         const updatePromise = currentLlamadaId ? 
             db.collection('llamadas').doc(currentLlamadaId).update({ estado: 'aceptada' }) : 
             Promise.resolve();
-        
         const tokenPromise = fetch(API_URL_TOKEN, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ identidad: 'Admin-' + Date.now(), sala: ROOM_NAME })
         });
-
         const [_, res] = await Promise.all([updatePromise, tokenPromise]);
         log('✅ Estado actualizado + Token obtenido');
-        
         if(!res.ok) throw new Error('Error token: ' + res.status);
         const data = await res.json();
-
         iniciarIceTimeout();
-
         activeRoom = await connect(data.token, {
             name: ROOM_NAME,
             audio: { 
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-                googEchoCancellation: true,
-                googAutoGainControl: true,
-                googNoiseSuppression: true,
-                googHighpassFilter: false,
-                googTypingNoiseDetection: false
+                echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+                googEchoCancellation: true, googAutoGainControl: true, googNoiseSuppression: true,
+                googHighpassFilter: false, googTypingNoiseDetection: false
             },
             video: false,
             preferredAudioCodecs: ['opus'],
             maxAudioBitrate: 40000,
             networkQuality: { local: 1, remote: 1 },
-            bandwidthProfile: {
-                video: {
-                    mode: 'collaboration',
-                    dominantSpeakerPriority: 'high'
-                }
-            }
+            bandwidthProfile: { video: { mode: 'collaboration', dominantSpeakerPriority: 'high' }}
         });
-
         log('✅ Twilio conectado');
         detenerIceTimeout();
-        
         configurarEventosReconexion(activeRoom);
         iniciarCheckeoTracks();
-        
         document.getElementById('controls-incoming').classList.add('hidden');
         document.getElementById('controls-active').classList.remove('hidden');
         document.getElementById('btn-mute').style.display = 'flex'; 
         setStatus("🟢 CONECTANDO...");
         document.getElementById('avatar').innerText = "🔊";
-
-        // 🔥 TIMEOUT SALA VACÍA: 25 segundos
         emptyRoomTimeout = setTimeout(() => {
             if (activeRoom && activeRoom.participants.size === 0) {
                 log('⚠️ Sala vacía por 25s, desconectando...');
@@ -973,14 +776,11 @@ window.contestarLlamada = async function() {
                 finalizarLlamada(true);
             }
         }, EMPTY_ROOM_TIMEOUT);
-
         activeRoom.participants.forEach(p => {
             clearTimeout(emptyRoomTimeout);
             emptyRoomTimeout = null;
             participantConnected(p);
         });
-        
-        // 🔥 TIMEOUT MÁXIMO DE LLAMADA: 5 minutos
         maxCallTimeout = setTimeout(() => {
             if (activeRoom) {
                 log('⏱️ Tiempo máximo de llamada alcanzado (5 min)');
@@ -989,7 +789,6 @@ window.contestarLlamada = async function() {
                 finalizarLlamada(true);
             }
         }, MAX_CALL_DURATION);
-
     } catch (err) {
         log('❌ Error contestar: ' + err.message);
         alert('Error: ' + err.message);
@@ -997,38 +796,26 @@ window.contestarLlamada = async function() {
     }
 };
 
-// ============================================
-// 🔥 PARTICIPANTES (CON AUTO-COLGAR)
-// ============================================
 function participantConnected(participant) {
     log(`👤 Participante: ${participant.identity}`);
     setStatus("🟢 EN LLAMADA");
-    
-    // Cancelar timeout sala vacía
     if (emptyRoomTimeout) {
         clearTimeout(emptyRoomTimeout);
         emptyRoomTimeout = null;
     }
-    
-    // 🔊 Vibración
     vibrar([200, 100, 200]);
-    
     participant.tracks.forEach(publication => {
         if (publication.isSubscribed && publication.track.kind === 'audio') {
             handleAudioTrack(publication.track);
         }
     });
-    
     participant.on('trackSubscribed', track => {
         if (track.kind === 'audio') {
             handleAudioTrack(track);
         }
     });
-    
-    // Monitorear calidad de red
     participant.on('networkQualityLevelChanged', (quality) => {
         actualizarIndicadorRed(quality);
-        
         if (quality < 2) {
             log(`⚠️ Red muy débil: ${quality}/5`);
         }
@@ -1037,13 +824,8 @@ function participantConnected(participant) {
 
 function participantDisconnected(participant) {
     log('👋 Participante desconectado: ' + participant.identity);
-    
-    // 🔥 AUTO-COLGAR CUANDO VISITANTE SE VA
     setStatus("Llamada finalizada", "El visitante colgó");
-    
-    // 🔊 Vibración
     vibrar([200]);
-    
     setTimeout(() => {
         finalizarLlamada(true);
     }, 2000);
@@ -1052,24 +834,18 @@ function participantDisconnected(participant) {
 function handleAudioTrack(track, forcing = false) {
     const audioElement = document.getElementById('remoteAudio');
     audioElement.srcObject = new MediaStream([track.mediaStreamTrack]);
-    
     audioElement.autoplay = true;
     audioElement.playsinline = true;
-    
     if (audioContext && audioContext.state === 'suspended') {
         audioContext.resume();
     }
-    
     conectarVisualizador(new MediaStream([track.mediaStreamTrack]));
-    
     if (forcing) {
         log('🔧 Track de audio reparado');
         playBeep(600, 100, 0.5);
         vibrar([100]);
     } else {
         log('🔊 Audio del visitante conectado');
-        
-        // 🔊🔊 BEEP PRINCIPAL: 900Hz, 500ms, volumen adaptativo
         playReadyBeep();
         vibrar([200, 100, 200]);
         flashScreen('#27ae60', 500);
@@ -1080,7 +856,14 @@ function handleAudioTrack(track, forcing = false) {
 
 window.rechazarLlamada = async function() {
     stopRinging();
-    
+    if (window.Capacitor) {
+        try {
+            await CallPlugin.endCall();
+            log('📞 Llamada nativa terminada');
+        } catch (e) {
+            log('⚠️ Error terminando llamada nativa: ' + e.message);
+        }
+    }
     if (currentLlamadaId) {
         try {
             await db.collection('llamadas').doc(currentLlamadaId).delete();
@@ -1089,22 +872,26 @@ window.rechazarLlamada = async function() {
             log('⚠️ Error eliminando: ' + error.message);
         }
     }
-    
     resetState();
     if(window.Capacitor && PushNotifications) PushNotifications.removeAllDeliveredNotifications();
     log('❌ Rechazada');
 };
 
 window.finalizarLlamada = async function(disconnect = true) {
+    if (window.Capacitor) {
+        try {
+            await CallPlugin.endCall();
+            log('📞 Llamada nativa terminada');
+        } catch (e) {
+            log('⚠️ Error terminando llamada nativa: ' + e.message);
+        }
+    }
     if (disconnect && activeRoom) {
         activeRoom.disconnect();
         activeRoom = null;
     }
-    
     detenerCheckeoTracks();
     detenerIceTimeout();
-    
-    // Limpiar timeouts
     if (emptyRoomTimeout) {
         clearTimeout(emptyRoomTimeout);
         emptyRoomTimeout = null;
@@ -1113,9 +900,7 @@ window.finalizarLlamada = async function(disconnect = true) {
         clearTimeout(maxCallTimeout);
         maxCallTimeout = null;
     }
-    
     if (window.stopVisualizer) window.stopVisualizer();
-    
     if (currentLlamadaId) {
         try {
             await db.collection('llamadas').doc(currentLlamadaId).delete();
@@ -1124,7 +909,6 @@ window.finalizarLlamada = async function(disconnect = true) {
             log('⚠️ Error: ' + error.message);
         }
     }
-    
     resetState();
 };
 
@@ -1134,6 +918,7 @@ function resetState() {
     currentLlamadaId = null;
     reconexionIntentos = 0;
     isReconnecting = false;
+    isProcessingCall = false;
     document.getElementById('controls-incoming').classList.add('hidden');
     document.getElementById('controls-active').classList.add('hidden');
     document.getElementById('btn-mute').style.display = 'none';
@@ -1142,9 +927,6 @@ function resetState() {
     updateNetworkStatus('online', 'En Línea');
 }
 
-// ============================================
-// AUDIO
-// ============================================
 function startRinging() {
     if (!audioContext) {
         log('⚠️ No hay AudioContext');
@@ -1185,8 +967,6 @@ window.toggleMute = function() {
     });
     document.getElementById('btn-mute').classList.toggle('muted', isMuted);
     log(isMuted ? '🔇 Mute ON' : '🔊 Mute OFF');
-    
-    // 🔊 Vibración al mutear/desmutear
     vibrar([100]);
 };
 
@@ -1202,31 +982,23 @@ function updateNetworkStatus(status, text) {
     if(txt) txt.innerText = text || (status === 'online' ? 'En Línea' : 'Offline');
 }
 
-// ============================================
-// VISUALIZADOR (OPTIMIZADO)
-// ============================================
 function iniciarVisualizador() {
     const canvas = document.getElementById('wave-visualizer');
     if(!canvas) return;
     const ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth; 
     canvas.height = 300;
-    
     let animationId = null;
-    
     function drawWave() {
         animationId = requestAnimationFrame(drawWave);
         if (!window.analyserNode) return; 
-        
         const bufferLength = window.analyserNode.frequencyBinCount; 
         const dataArray = new Uint8Array(bufferLength);
         window.analyserNode.getByteTimeDomainData(dataArray);
-        
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.lineWidth = 2; 
         ctx.strokeStyle = '#2ecc71'; 
         ctx.beginPath();
-        
         const sliceWidth = canvas.width / (bufferLength / 2); 
         let x = 0;
         for (let i = 0; i < bufferLength; i += 2) {
@@ -1239,7 +1011,6 @@ function iniciarVisualizador() {
         ctx.stroke();
     }
     drawWave();
-    
     window.stopVisualizer = () => {
         if (animationId) cancelAnimationFrame(animationId);
     };
@@ -1250,12 +1021,9 @@ function conectarVisualizador(stream) {
     try {
         const source = audioContext.createMediaStreamSource(stream);
         window.analyserNode = audioContext.createAnalyser(); 
-        
         window.analyserNode.fftSize = 512;
         window.analyserNode.smoothingTimeConstant = 0.8;
-        
         source.connect(window.analyserNode);
-        
         const waveVis = document.getElementById('wave-visualizer');
         if(waveVis) waveVis.classList.add('active');
     } catch (e) {
@@ -1265,4 +1033,4 @@ function conectarVisualizador(stream) {
 
 log('✅ Módulos cargados, esperando botón Entrar');
 
-} // FIN initApp
+}
