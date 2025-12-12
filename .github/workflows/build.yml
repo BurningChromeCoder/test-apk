@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APK with Native Calling
 
 on:
   push:
@@ -33,23 +33,449 @@ jobs:
     - name: Add Android platform
       run: npx cap add android || true 
 
-    # 🔥 INYECCIÓN COMPLETA DE PERMISOS Y CONFIGURACIÓN
-    - name: Inject Permissions and Configuration into Manifest
+    # 🔥 PASO 1: MANIFEST CON PERMISOS TELECOM
+    - name: Configure AndroidManifest with Telecom
       run: |
         MANIFEST="android/app/src/main/AndroidManifest.xml"
         
-        # 🔥 TODOS LOS PERMISOS NECESARIOS
-        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.CAMERA" /><uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.FOREGROUND_SERVICE" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" /><uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" /><uses-feature android:name="android.hardware.camera" android:required="false" />'
+        # Permisos base + Telecom
+        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" />
+        <uses-permission android:name="android.permission.CAMERA" />
+        <uses-permission android:name="android.permission.RECORD_AUDIO" />
+        <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+        <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+        <uses-permission android:name="android.permission.WAKE_LOCK" />
+        <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+        <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+        <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+        <uses-permission android:name="android.permission.VIBRATE" />
+        <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+        <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
+        <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+        <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+        <uses-permission android:name="android.permission.CALL_PHONE" />
+        <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+        <uses-permission android:name="android.permission.BIND_TELECOM_CONNECTION_SERVICE" />
+        <uses-feature android:name="android.hardware.camera" android:required="false" />'
         
-        # Insertar permisos antes de <application>
+        # Reemplazar permisos
         sed -i "s|<application|$PERMISSIONS<application|g" $MANIFEST
         
-        # 🔥 REEMPLAZAR TODA LA LÍNEA DE <activity> (no agregar)
-        # Buscar línea que contiene <activity y reemplazarla completamente
+        # Configurar MainActivity
         sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleTask" android:showWhenLocked="true" android:turnScreenOn="true" android:excludeFromRecents="false" android:showForAllUsers="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
         
-        echo "--- MANIFEST MODIFICADO ---"
+        # Agregar CallConnectionService antes de </application>
+        sed -i 's|</application>|<service android:name=".CallConnectionService" android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE" android:exported="true"><intent-filter><action android:name="android.telecom.ConnectionService" /></intent-filter></service></application>|' $MANIFEST
+        
+        echo "--- MANIFEST CONFIGURADO ---"
         cat $MANIFEST
+
+    # 🔥 PASO 2: CREAR CallConnectionService.java
+    - name: Create CallConnectionService
+      run: |
+        mkdir -p android/app/src/main/java/com/mipuerta/app
+        cat > android/app/src/main/java/com/mipuerta/app/CallConnectionService.java << 'EOF'
+        package com.mipuerta.app;
+
+        import android.net.Uri;
+        import android.telecom.Connection;
+        import android.telecom.ConnectionRequest;
+        import android.telecom.ConnectionService;
+        import android.telecom.PhoneAccountHandle;
+        import android.telecom.TelecomManager;
+        import android.telecom.DisconnectCause;
+        import android.util.Log;
+
+        public class CallConnectionService extends ConnectionService {
+            private static final String TAG = "CallConnectionService";
+            private static CallConnection activeConnection;
+
+            @Override
+            public Connection onCreateOutgoingConnection(
+                    PhoneAccountHandle connectionManagerPhoneAccount,
+                    ConnectionRequest request) {
+                return null;
+            }
+
+            @Override
+            public Connection onCreateIncomingConnection(
+                    PhoneAccountHandle connectionManagerPhoneAccount,
+                    ConnectionRequest request) {
+                
+                Log.d(TAG, "onCreateIncomingConnection");
+                
+                activeConnection = new CallConnection();
+                activeConnection.setConnectionCapabilities(
+                    Connection.CAPABILITY_HOLD | 
+                    Connection.CAPABILITY_SUPPORT_HOLD |
+                    Connection.CAPABILITY_MUTE
+                );
+                
+                activeConnection.setAddress(
+                    Uri.parse("tel:Visitante"),
+                    TelecomManager.PRESENTATION_ALLOWED
+                );
+                
+                activeConnection.setCallerDisplayName(
+                    "🔔 Timbre Puerta",
+                    TelecomManager.PRESENTATION_ALLOWED
+                );
+                
+                activeConnection.setRinging();
+                
+                return activeConnection;
+            }
+
+            public static void endCall() {
+                if (activeConnection != null) {
+                    activeConnection.setDisconnected(new DisconnectCause(DisconnectCause.LOCAL));
+                    activeConnection.destroy();
+                    activeConnection = null;
+                }
+            }
+
+            public static void answerCall() {
+                if (activeConnection != null) {
+                    activeConnection.setActive();
+                }
+            }
+
+            private static class CallConnection extends Connection {
+                
+                @Override
+                public void onShowIncomingCallUi() {
+                    Log.d(TAG, "onShowIncomingCallUi");
+                }
+
+                @Override
+                public void onAnswer() {
+                    Log.d(TAG, "onAnswer");
+                    setActive();
+                    CallPlugin.notifyCallAnswered();
+                }
+
+                @Override
+                public void onReject() {
+                    Log.d(TAG, "onReject");
+                    setDisconnected(new DisconnectCause(DisconnectCause.REJECTED));
+                    destroy();
+                    CallPlugin.notifyCallRejected();
+                }
+
+                @Override
+                public void onDisconnect() {
+                    Log.d(TAG, "onDisconnect");
+                    setDisconnected(new DisconnectCause(DisconnectCause.LOCAL));
+                    destroy();
+                }
+
+                @Override
+                public void onAbort() {
+                    Log.d(TAG, "onAbort");
+                    setDisconnected(new DisconnectCause(DisconnectCause.CANCELED));
+                    destroy();
+                }
+
+                @Override
+                public void onHold() {
+                    setOnHold();
+                }
+
+                @Override
+                public void onUnhold() {
+                    setActive();
+                }
+            }
+        }
+        EOF
+
+    # 🔥 PASO 3: CREAR CallPlugin.java
+    - name: Create CallPlugin
+      run: |
+        cat > android/app/src/main/java/com/mipuerta/app/CallPlugin.java << 'EOF'
+        package com.mipuerta.app;
+
+        import android.Manifest;
+        import android.app.Activity;
+        import android.content.ComponentName;
+        import android.content.Context;
+        import android.content.pm.PackageManager;
+        import android.net.Uri;
+        import android.os.Build;
+        import android.os.Bundle;
+        import android.telecom.PhoneAccount;
+        import android.telecom.PhoneAccountHandle;
+        import android.telecom.TelecomManager;
+        import android.util.Log;
+
+        import androidx.core.content.ContextCompat;
+
+        import com.getcapacitor.JSObject;
+        import com.getcapacitor.Plugin;
+        import com.getcapacitor.PluginCall;
+        import com.getcapacitor.PluginMethod;
+        import com.getcapacitor.annotation.CapacitorPlugin;
+        import com.getcapacitor.annotation.Permission;
+
+        @CapacitorPlugin(
+            name = "CallPlugin",
+            permissions = {
+                @Permission(strings = {
+                    Manifest.permission.READ_PHONE_STATE,
+                    Manifest.permission.CALL_PHONE,
+                    Manifest.permission.MANAGE_OWN_CALLS
+                })
+            }
+        )
+        public class CallPlugin extends Plugin {
+            private static final String TAG = "CallPlugin";
+            private static CallPlugin instance;
+            
+            private TelecomManager telecomManager;
+            private PhoneAccountHandle phoneAccountHandle;
+
+            @Override
+            public void load() {
+                super.load();
+                instance = this;
+                
+                Activity activity = getActivity();
+                telecomManager = (TelecomManager) activity.getSystemService(Context.TELECOM_SERVICE);
+                registerPhoneAccount();
+            }
+
+            private void registerPhoneAccount() {
+                Activity activity = getActivity();
+                ComponentName componentName = new ComponentName(activity, CallConnectionService.class);
+                
+                phoneAccountHandle = new PhoneAccountHandle(componentName, "MiPuertaAccount");
+                
+                PhoneAccount phoneAccount = PhoneAccount.builder(phoneAccountHandle, "MiPuerta")
+                    .setCapabilities(PhoneAccount.CAPABILITY_CALL_PROVIDER)
+                    .setHighlightColor(0xFF2ECC71)
+                    .setShortDescription("Timbre MiPuerta")
+                    .setSupportedUriSchemes(java.util.Arrays.asList("tel"))
+                    .build();
+                
+                telecomManager.registerPhoneAccount(phoneAccount);
+                Log.d(TAG, "PhoneAccount registrada");
+            }
+
+            @PluginMethod
+            public void checkPermissions(PluginCall call) {
+                Activity activity = getActivity();
+                
+                boolean hasReadPhone = ContextCompat.checkSelfPermission(activity, 
+                    Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED;
+                
+                boolean hasCallPhone = ContextCompat.checkSelfPermission(activity, 
+                    Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED;
+                
+                boolean hasManageOwnCalls = true;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    hasManageOwnCalls = ContextCompat.checkSelfPermission(activity, 
+                        Manifest.permission.MANAGE_OWN_CALLS) == PackageManager.PERMISSION_GRANTED;
+                }
+
+                JSObject ret = new JSObject();
+                ret.put("allGranted", hasReadPhone && hasCallPhone && hasManageOwnCalls);
+                call.resolve(ret);
+            }
+
+            @PluginMethod
+            public void requestPermissions(PluginCall call) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    String[] permissions;
+                    
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        permissions = new String[]{
+                            Manifest.permission.READ_PHONE_STATE,
+                            Manifest.permission.CALL_PHONE,
+                            Manifest.permission.MANAGE_OWN_CALLS
+                        };
+                    } else {
+                        permissions = new String[]{
+                            Manifest.permission.READ_PHONE_STATE,
+                            Manifest.permission.CALL_PHONE
+                        };
+                    }
+                    
+                    requestPermissionForAliases(permissions, call, "permissionsCallback");
+                } else {
+                    JSObject ret = new JSObject();
+                    ret.put("granted", true);
+                    call.resolve(ret);
+                }
+            }
+
+            @PluginMethod
+            public void showIncomingCall(PluginCall call) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                    call.reject("API 23+ requerida");
+                    return;
+                }
+
+                try {
+                    Bundle extras = new Bundle();
+                    extras.putString("caller_name", "🔔 Visitante en Puerta");
+                    
+                    telecomManager.addNewIncomingCall(phoneAccountHandle, extras);
+                    
+                    Log.d(TAG, "Llamada nativa mostrada");
+                    
+                    JSObject ret = new JSObject();
+                    ret.put("success", true);
+                    call.resolve(ret);
+                    
+                } catch (Exception e) {
+                    Log.e(TAG, "Error: " + e.getMessage());
+                    call.reject("Error: " + e.getMessage());
+                }
+            }
+
+            @PluginMethod
+            public void endCall(PluginCall call) {
+                CallConnectionService.endCall();
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                call.resolve(ret);
+            }
+
+            public static void notifyCallAnswered() {
+                if (instance != null) {
+                    JSObject data = new JSObject();
+                    data.put("action", "answered");
+                    instance.notifyListeners("callStateChanged", data);
+                }
+            }
+
+            public static void notifyCallRejected() {
+                if (instance != null) {
+                    JSObject data = new JSObject();
+                    data.put("action", "rejected");
+                    instance.notifyListeners("callStateChanged", data);
+                }
+            }
+        }
+        EOF
+
+    # 🔥 PASO 4: CREAR WakeLockPlugin.java (del anterior)
+    - name: Create WakeLockPlugin
+      run: |
+        cat > android/app/src/main/java/com/mipuerta/app/WakeLockPlugin.java << 'EOF'
+        package com.mipuerta.app;
+
+        import android.app.Activity;
+        import android.app.KeyguardManager;
+        import android.content.Context;
+        import android.content.Intent;
+        import android.os.Build;
+        import android.os.PowerManager;
+        import android.view.WindowManager;
+        import com.getcapacitor.JSObject;
+        import com.getcapacitor.Plugin;
+        import com.getcapacitor.PluginCall;
+        import com.getcapacitor.PluginMethod;
+        import com.getcapacitor.annotation.CapacitorPlugin;
+
+        @CapacitorPlugin(name = "WakeLock")
+        public class WakeLockPlugin extends Plugin {
+            
+            private PowerManager.WakeLock wakeLock;
+
+            @PluginMethod
+            public void acquire(PluginCall call) {
+                Activity activity = getActivity();
+                
+                if (activity == null) {
+                    call.reject("Activity not available");
+                    return;
+                }
+
+                activity.runOnUiThread(() -> {
+                    try {
+                        PowerManager powerManager = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                        if (wakeLock == null) {
+                            wakeLock = powerManager.newWakeLock(
+                                PowerManager.SCREEN_BRIGHT_WAKE_LOCK | 
+                                PowerManager.ACQUIRE_CAUSES_WAKEUP |
+                                PowerManager.ON_AFTER_RELEASE,
+                                "MiPuerta::WakeLock"
+                            );
+                            wakeLock.setReferenceCounted(false);
+                        }
+                        
+                        if (!wakeLock.isHeld()) {
+                            wakeLock.acquire(10 * 60 * 1000L);
+                        }
+
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                            activity.setShowWhenLocked(true);
+                            activity.setTurnScreenOn(true);
+                        } else {
+                            activity.getWindow().addFlags(
+                                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED |
+                                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON |
+                                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                            );
+                        }
+
+                        Intent intent = new Intent(activity, activity.getClass());
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | 
+                                      Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                        activity.startActivity(intent);
+
+                        JSObject ret = new JSObject();
+                        ret.put("success", true);
+                        call.resolve(ret);
+                        
+                    } catch (Exception e) {
+                        call.reject("Error: " + e.getMessage());
+                    }
+                });
+            }
+
+            @PluginMethod
+            public void release(PluginCall call) {
+                if (wakeLock != null && wakeLock.isHeld()) {
+                    wakeLock.release();
+                }
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                call.resolve(ret);
+            }
+        }
+        EOF
+
+    # 🔥 PASO 5: ACTUALIZAR MainActivity
+    - name: Update MainActivity
+      run: |
+        cat > android/app/src/main/java/com/mipuerta/app/MainActivity.java << 'EOF'
+        package com.mipuerta.app;
+
+        import android.os.Bundle;
+        import com.getcapacitor.BridgeActivity;
+
+        public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+                super.onCreate(savedInstanceState);
+                registerPlugin(WakeLockPlugin.class);
+                registerPlugin(CallPlugin.class);
+            }
+        }
+        EOF
+
+    # 🔥 PASO 6: ACTUALIZAR app.js para usar CallPlugin
+    - name: Patch app.js with CallPlugin
+      run: |
+        # Agregar imports
+        sed -i "1i import { registerPlugin } from '@capacitor/core';\nconst WakeLock = registerPlugin('WakeLock');\nconst CallPlugin = registerPlugin('CallPlugin');" www/app.js
+        
+        # Buscar la función traerAlFrente y agregar CallPlugin
+        sed -i '/async function traerAlFrente() {/a\    \n    // Mostrar llamada nativa\n    if (window.Capacitor) {\n        try {\n            await CallPlugin.showIncomingCall();\n            log('\''📞 Llamada nativa mostrada'\'');\n        } catch (e) {\n            log('\''⚠️ CallPlugin error: '\'' + e.message);\n        }\n    }' www/app.js
+        
+        echo "✅ app.js actualizado con CallPlugin"
 
     - name: Create google-services.json
       run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
@@ -68,6 +494,6 @@ jobs:
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: app-debug
+        name: app-debug-calling
         path: android/app/build/outputs/apk/debug/app-debug.apk
         retention-days: 30
