@@ -33,13 +33,14 @@ jobs:
     - name: Add Android platform
       run: npx cap add android || true 
 
-    # 🔥 PASO 1: MANIFEST CON PERMISOS TELECOM
+    
+    # 🔥 PASO 1: MANIFEST CON PERMISOS TELECOM (CORREGIDO)
     - name: Configure AndroidManifest with Telecom
       run: |
         MANIFEST="android/app/src/main/AndroidManifest.xml"
         
-        # Permisos base + Telecom
-        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" />
+        # Definimos los permisos en una variable temporal
+        PERMISSIONS_RAW='<uses-permission android:name="android.permission.INTERNET" />
         <uses-permission android:name="android.permission.CAMERA" />
         <uses-permission android:name="android.permission.RECORD_AUDIO" />
         <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
@@ -58,18 +59,21 @@ jobs:
         <uses-permission android:name="android.permission.BIND_TELECOM_CONNECTION_SERVICE" />
         <uses-feature android:name="android.hardware.camera" android:required="false" />'
         
-        # Reemplazar permisos
+        # TRUCO: Eliminamos los saltos de línea para que SED no falle
+        PERMISSIONS=$(echo "$PERMISSIONS_RAW" | tr -d '\n')
+        
+        # Reemplazar permisos (insertar antes de <application)
         sed -i "s|<application|$PERMISSIONS<application|g" $MANIFEST
         
-        # Configurar MainActivity
+        # Configurar MainActivity (Nota: asegúrate de escapar los pipes | correctamente)
         sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleTask" android:showWhenLocked="true" android:turnScreenOn="true" android:excludeFromRecents="false" android:showForAllUsers="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
         
-        # Agregar CallConnectionService antes de </application>
-        sed -i 's|</application>|<service android:name=".CallConnectionService" android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE" android:exported="true"><intent-filter><action android:name="android.telecom.ConnectionService" /></intent-filter></service></application>|' $MANIFEST
+        # Agregar CallConnectionService antes de cerrar </application>
+        SERVICE_TAG='<service android:name=".CallConnectionService" android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE" android:exported="true"><intent-filter><action android:name="android.telecom.ConnectionService" /></intent-filter></service>'
+        sed -i "s|</application>|$SERVICE_TAG</application>|g" $MANIFEST
         
         echo "--- MANIFEST CONFIGURADO ---"
         cat $MANIFEST
-
     # 🔥 PASO 2: CREAR CallConnectionService.java
     - name: Create CallConnectionService
       run: |
