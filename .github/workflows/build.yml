@@ -85,9 +85,7 @@ jobs:
                                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
                             );
                         }
-                        Intent intent = new Intent(activity, activity.getClass());
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                        activity.startActivity(intent);
+
                         JSObject ret = new JSObject();
                         ret.put("success", true);
                         call.resolve(ret);
