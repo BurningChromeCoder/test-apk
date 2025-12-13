@@ -207,34 +207,34 @@ async function initApp() {
         playBeep(400, 200, 0.5);
     }
 
-    // --- NUEVA FUNCIÓN DE VIBRACIÓN USANDO CALLPLUGIN ---
+    // --- FUNCIÓN ACTUALIZADA: VIBRACIÓN CON CALLPLUGIN ---
     async function vibrar(pattern = [200, 100, 200]) {
+        // Intento 1: CallPlugin (Prioridad solicitada)
         try {
             if (CallPlugin) {
-                // Prioridad 1: CallPlugin
-                // Asumimos que acepta el objeto o intenta vibrar
-                await CallPlugin.vibrate({ duration: 200, pattern: pattern }); 
+                await CallPlugin.vibrate(); 
                 log('📳 Vibración CallPlugin');
                 return;
             }
         } catch (e) {
-            log('⚠️ CallPlugin vibración falló: ' + e.message);
+            log('⚠️ CallPlugin falló: ' + e.message);
         }
-
-        // Fallbacks
+        
+        // Intento 2: Capacitor Haptics
         try {
             if (Haptics) {
                 await Haptics.vibrate({ duration: 200 });
-                log('📳 Vibración Haptics (Fallback)');
+                log('📳 Vibración Haptics');
                 return;
             }
         } catch (e) {
             log('⚠️ Haptics falló: ' + e.message);
         }
-        
+
+        // Intento 3: Web Nativo
         if ('vibrate' in navigator) {
             navigator.vibrate(pattern);
-            log('📳 Vibración Web (Fallback)');
+            log('📳 Vibración Web');
         }
     }
 
@@ -486,13 +486,10 @@ async function initApp() {
         }
     }
 
-    // --- FUNCIÓN INICIAR APP ACTUALIZADA ---
     window.iniciarApp = async function() {
         try {
-            log('🚀 INICIANDO V11.0 CON CALLPLUGIN (PERMISOS INICIALES)...');
+            log('🚀 INICIANDO V11.0 CON CALLPLUGIN...');
             inicializarAudioContext();
-            
-            // Verificación del DOM
             const requiredElements = ['console-log', 'status-text', 'avatar', 'controls-incoming', 'controls-active'];
             for (const id of requiredElements) {
                 if (!document.getElementById(id)) {
@@ -500,49 +497,51 @@ async function initApp() {
                 }
             }
             log('✅ DOM verificado');
-
-            // Audio Context
             try {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 log('✅ Audio Context creado');
             } catch (e) {
                 log('⚠️ Audio Context error: ' + e.message);
             }
-
-            // Remover Onboarding
             const onboarding = document.getElementById('onboarding');
             if(onboarding) {
                 onboarding.style.opacity = '0';
                 setTimeout(() => onboarding.remove(), 500);
                 log('✅ Onboarding removido');
             }
-
-            // SOLICITUD DE PERMISOS AL INICIO
+            
             await requestWakeLock();
+            
             if (window.Capacitor) {
                 log('📱 Modo Capacitor detectado');
                 
-                // --- CAMBIO: Solicitar permisos AL INICIO ---
+                // --- CAMBIO: SOLICITAR PERMISOS AL INICIO ---
                 try {
-                    log('📱 Solicitando permisos de CallPlugin al inicio...');
-                    const perms = await CallPlugin.requestPermissions();
-                    if(perms.allGranted) {
-                         log('✅ Permisos de CallPlugin otorgados');
+                    log('📱 Solicitando permisos CallPlugin...');
+                    await CallPlugin.requestPermissions();
+                    log('✅ Solicitud permisos enviada');
+                } catch (e) {
+                    log('⚠️ Error al pedir permisos: ' + e.message);
+                }
+                
+                try {
+                    const perms = await CallPlugin.checkPermissions();
+                    if (!perms.allGranted) {
+                        log('⚠️ Permisos no otorgados completamente');
                     } else {
-                         log('⚠️ Permisos no otorgados completamente');
+                        log('✅ Permisos confirmados');
                     }
                 } catch (e) {
-                    log('⚠️ Error solicitando permisos CallPlugin: ' + e.message);
+                    log('⚠️ Error chequeo permisos: ' + e.message);
                 }
                 
                 await iniciarCapacitor();
             } else {
                 log('🌐 Modo Web detectado');
             }
-
+            
             iniciarVisualizador();
             activarModoSegundoPlano();
-
             if (db) {
                 log('🔥 Iniciando Firebase listener...');
                 iniciarEscuchaFirebase();
@@ -550,28 +549,26 @@ async function initApp() {
             } else {
                 throw new Error('Firebase no está disponible');
             }
-
             setStatus("✅ Listo para recibir llamadas");
             updateNetworkStatus('online', 'En Línea');
             log('✅ APP LISTA CON CONNECTIONSERVICE');
             cargarEstadoModoForzado();
-
-            // --- CAMBIO: Test con delay de 2 segundos ---
+            
+            // --- CAMBIO: TEST CON DELAY 2 SEGUNDOS ---
             setTimeout(() => {
-                log('🧪 Probando vibración (2s delay)...');
-                vibrar([200]); // Usa la nueva función con CallPlugin
-                
+                log('🧪 Probando vibración (CallPlugin)...');
+                vibrar([200]);
                 setTimeout(() => {
                     const resultado = confirm('¿Sentiste la vibración?\n(Presiona OK si sí, Cancelar si no)');
                     if (!resultado) {
-                        log('⚠️ Vibración no confirmada por usuario');
+                        log('⚠️ Vibración no funciona');
                         alert('⚠️ La vibración no funciona.\nVerifica permisos en:\nAjustes > Notificaciones > MiPuerta');
                     } else {
-                        log('✅ Vibración confirmada');
+                        log('✅ Vibración OK');
                     }
                 }, 1000);
-            }, 2000); // <-- Delay aumentado a 2000ms
-
+            }, 2000); // <-- 2000ms de espera
+            
         } catch (e) { 
             log('❌ ERROR CRÍTICO: ' + e.message);
             alert("Error inicialización: " + e.message);
@@ -710,10 +707,9 @@ async function initApp() {
         log('🚀 Trayendo app al frente...');
         if (window.Capacitor) {
             try {
-                // Verificar permisos nuevamente por si acaso
                 const perms = await CallPlugin.checkPermissions();
                 if (!perms.allGranted) {
-                    log('⚠️ Pidiendo permisos de teléfono (fase llamada)...');
+                    log('⚠️ Pidiendo permisos de teléfono...');
                     await CallPlugin.requestPermissions();
                 }
                 await CallPlugin.showIncomingCall();
@@ -1067,4 +1063,4 @@ async function initApp() {
 
     log('✅ Módulos cargados, esperando botón Entrar');
 
-        }
+}
