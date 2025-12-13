@@ -193,6 +193,7 @@ jobs:
         import com.getcapacitor.PluginMethod;
         import com.getcapacitor.annotation.CapacitorPlugin;
         import com.getcapacitor.annotation.Permission;
+        import com.getcapacitor.annotation.PermissionCallback;
         @CapacitorPlugin(name = "CallPlugin", permissions = {@Permission(strings = {Manifest.permission.READ_PHONE_STATE, Manifest.permission.CALL_PHONE, Manifest.permission.MANAGE_OWN_CALLS, Manifest.permission.VIBRATE})})
         public class CallPlugin extends Plugin {
             private static final String TAG = "CallPlugin";
