@@ -330,9 +330,12 @@ jobs:
         public class MainActivity extends BridgeActivity {
             @Override
             public void onCreate(Bundle savedInstanceState) {
-                super.onCreate(savedInstanceState);
+                // 1. PRIMERO registramos los plugins
                 registerPlugin(WakeLockPlugin.class);
                 registerPlugin(CallPlugin.class);
+                
+                // 2. DESPUÉS iniciamos el puente de Capacitor
+                super.onCreate(savedInstanceState);
             }
         }
         MAINEOF
