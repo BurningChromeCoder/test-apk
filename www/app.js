@@ -516,14 +516,27 @@ async function initApp() {
                 log('📱 Modo Capacitor detectado');
                 
                 // --- CAMBIO: SOLICITAR PERMISOS AL INICIO ---
+                // --- INICIO CORRECCIÓN TIMEOUT ---
                 try {
                     log('📱 Solicitando permisos CallPlugin...');
-                    await CallPlugin.requestPermissions();
-                    log('✅ Solicitud permisos enviada');
+                    
+                    // Definimos una promesa que se cumple sola a los 3 segundos
+                    const timeout = new Promise(resolve => setTimeout(() => {
+                        log('⏩ Tiempo agotado esperando permisos, continuando...');
+                        resolve('timeout');
+                    }, 3000));
+
+                    // Hacemos una carrera entre el Plugin y el Reloj
+                    await Promise.race([
+                        CallPlugin.requestPermissions(),
+                        timeout
+                    ]);
+                    
+                    log('✅ Proceso de permisos finalizado');
                 } catch (e) {
                     log('⚠️ Error al pedir permisos: ' + e.message);
                 }
-                
+                // --- FIN CORRECCIÓN TIMEOUT ---
                 try {
                     const perms = await CallPlugin.checkPermissions();
                     if (!perms.allGranted) {
