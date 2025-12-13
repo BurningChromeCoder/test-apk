@@ -252,6 +252,13 @@ jobs:
                     call.resolve(ret);
                 }
             }
+            // --- ESTA ES LA FUNCIÓN QUE FALTABA ---
+            @PermissionCallback
+            private void permissionsCallback(PluginCall call) {
+                // Cuando el usuario responde, volvemos a chequear y devolvemos el resultado
+                this.checkPermissions(call);
+            }
+            // --------------------------------------            
             @PluginMethod
             public void vibrate(PluginCall call) {
                 Activity activity = getActivity();
