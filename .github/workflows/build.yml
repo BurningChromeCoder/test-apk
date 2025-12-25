@@ -1,283 +1,232 @@
-import { Haptics } from '@capacitor/haptics';
-import { registerPlugin } from '@capacitor/core';
+name: Build APK Completo - Fix Vibración y Velocidad
 
-const WakeLock = registerPlugin('WakeLock');
-const CallPlugin = registerPlugin('CallPlugin');
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
 
-window.addEventListener('error', function(e) {
-    const errorDiv = document.getElementById('console-log');
-    if (errorDiv) {
-        errorDiv.innerHTML = \`<div style="color:red;">❌ ERROR: \${e.message}<br>Archivo: \${e.filename}<br>Línea: \${e.lineno}</div>\` + errorDiv.innerHTML;
-    }
-    console.error('ERROR CAPTURADO:', e);
-});
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Setup Java 21
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+    
+    - name: Install Dependencies
+      run: npm install
 
-window.addEventListener('unhandledrejection', function(e) {
-    const errorDiv = document.getElementById('console-log');
-    if (errorDiv) {
-        errorDiv.innerHTML = \`<div style="color:orange;">⚠️ PROMISE ERROR: \${e.reason}</div>\` + errorDiv.innerHTML;
-    }
-    console.error('PROMISE ERROR:', e);
-});
+    - name: Build Web Assets
+      run: npm run build
+      
+    - name: Add Android platform
+      run: npx cap add android || true
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initApp);
-} else {
-    initApp();
-}
-
-async function initApp() {
-    console.log('🚀 Iniciando carga de módulos...');
-
-    let connect, PushNotifications;
-
-    try {
-        const twilioModule = await import('twilio-video');
-        connect = twilioModule.connect;
-        console.log('✅ Twilio cargado');
-    } catch (e) {
-        console.error('Error cargando Twilio:', e);
-    }
-
-    try {
-        const capacitorModule = await import('@capacitor/push-notifications');
-        PushNotifications = capacitorModule.PushNotifications;
-        console.log('✅ Capacitor cargado');
-    } catch (e) {
-        console.log('⚠️ Capacitor no disponible');
-    }
-
-    let db;
-    try {
-        if (typeof firebase !== 'undefined') {
-            if (!firebase.apps.length) {
-                firebase.initializeApp({
-                    apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
-                    authDomain: "puerta-c3a71.firebaseapp.com",
-                    projectId: "puerta-c3a71",
-                    storageBucket: "puerta-c3a71.firebasestorage.app",
-                    messagingSenderId: "830550601352",
-                    appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
+    - name: Create All Native Plugins
+      run: |
+        mkdir -p android/app/src/main/java/com/mipuerta/app
+        
+        cat > android/app/src/main/java/com/mipuerta/app/WakeLockPlugin.java << 'WAKEOF'
+        package com.mipuerta.app;
+        import android.app.Activity;
+        import android.content.Context;
+        import android.os.PowerManager;
+        import android.view.WindowManager;
+        import com.getcapacitor.Plugin;
+        import com.getcapacitor.PluginCall;
+        import com.getcapacitor.PluginMethod;
+        import com.getcapacitor.annotation.CapacitorPlugin;
+        @CapacitorPlugin(name = "WakeLock")
+        public class WakeLockPlugin extends Plugin {
+            @PluginMethod
+            public void acquire(PluginCall call) {
+                Activity activity = getActivity();
+                activity.runOnUiThread(() -> {
+                    try {
+                        PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                        PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:Wake");
+                        wl.acquire(10000);
+                        activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                        call.resolve();
+                    } catch (Exception e) { call.reject(e.getMessage()); }
                 });
             }
-            db = firebase.firestore();
+            @PluginMethod
+            public void release(PluginCall call) { call.resolve(); }
         }
-    } catch (e) {
-        console.error('Firebase error:', e);
-    }
+        WAKEOF
+        
+        cat > android/app/src/main/java/com/mipuerta/app/CallPlugin.java << 'CALLEOF'
+        package com.mipuerta.app;
+        import android.Manifest;
+        import android.app.Activity;
+        import android.app.NotificationChannel;
+        import android.app.NotificationManager;
+        import android.app.PendingIntent;
+        import android.content.Context;
+        import android.content.Intent;
+        import android.media.AudioAttributes;
+        import android.media.Ringtone;
+        import android.media.RingtoneManager;
+        import android.net.Uri;
+        import android.os.Build;
+        import android.os.PowerManager;
+        import android.os.VibrationEffect;
+        import android.os.Vibrator;
+        import android.view.WindowManager;
+        import androidx.core.app.NotificationCompat;
+        import com.getcapacitor.Plugin;
+        import com.getcapacitor.PluginCall;
+        import com.getcapacitor.PluginMethod;
+        import com.getcapacitor.annotation.CapacitorPlugin;
+        import com.getcapacitor.annotation.Permission;
 
-    const ROOM_NAME = 'sala-principal'; 
-    const API_URL_REGISTRO = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
-    const API_URL_TOKEN = 'https://us-central1-puerta-c3a71.cloudfunctions.net/obtenerTokenTwilio';
-    
-    let activeRoom = null;
-    let currentLlamadaId = null; 
-    let audioContext = null;
-    let ringtoneOscillator = null; 
-    let isMuted = false;
-    let wakeLock = null;
-    let firestoreUnsubscribe = null;
-    let isProcessingCall = false;
-    let lastCallTimestamp = 0;
+        @CapacitorPlugin(name = "CallPlugin", permissions = {
+            @Permission(alias = "audio", strings = {Manifest.permission.RECORD_AUDIO, Manifest.permission.MODIFY_AUDIO_SETTINGS}),
+            @Permission(alias = "phone", strings = {Manifest.permission.READ_PHONE_STATE, Manifest.permission.CALL_PHONE}),
+            @Permission(alias = "vibrate", strings = {Manifest.permission.VIBRATE})
+        })
+        public class CallPlugin extends Plugin {
+            private Ringtone currentRingtone;
+            private Vibrator vibrator;
 
-    if (window.Capacitor) {
-        CallPlugin.addListener('callStateChanged', (data) => {
-            log('📞 Estado llamada nativa: ' + data.action);
-            if (data.action === 'answered') contestarLlamada();
-            else if (data.action === 'rejected') rechazarLlamada();
-        });
-    }
+            @PluginMethod
+            public void showIncomingCall(PluginCall call) {
+                String ringtoneType = call.getString("ringtoneType", "TYPE_RINGTONE");
+                Activity activity = getActivity();
+                vibrator = (Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
 
-    function log(msg) {
-        const logDiv = document.getElementById('console-log');
-        if(logDiv) {
-            const time = new Date().toLocaleTimeString();
-            logDiv.innerHTML = \`<div>[\${time}] \${msg}</div>\` + logDiv.innerHTML;
-        }
-        console.log(\`[App] \${msg}\`);
-    }
+                activity.runOnUiThread(() -> {
+                    try {
+                        // 1. ENCENDIDO INSTANTÁNEO
+                        PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                        PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:FastWake");
+                        wl.acquire(20000);
+                        activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-    async function vibrar(pattern = [200, 100, 200]) {
-        try {
-            if (window.Capacitor) {
-                await CallPlugin.vibrate(); 
-                return;
+                        // 2. SONIDO SIN ESPERAS
+                        if (currentRingtone != null) currentRingtone.stop();
+                        int type = "TYPE_ALARM".equals(ringtoneType) ? RingtoneManager.TYPE_ALARM : RingtoneManager.TYPE_RINGTONE;
+                        Uri uri = RingtoneManager.getDefaultUri(type);
+                        currentRingtone = RingtoneManager.getRingtone(activity, uri);
+                        if (currentRingtone != null) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                                currentRingtone.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build());
+                            }
+                            currentRingtone.play();
+                        }
+
+                        // 3. VIBRACIÓN INTEGRADA (Para evitar error JS)
+                        if (vibrator != null) {
+                            long[] pattern = {0, 800, 200, 800, 200, 800};
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
+                            } else {
+                                vibrator.vibrate(pattern, 0);
+                            }
+                        }
+
+                        // 4. NOTIFICACIÓN
+                        NotificationManager nm = (NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            NotificationChannel channel = new NotificationChannel("urgent_calls", "Llamadas Urgentes", NotificationManager.IMPORTANCE_HIGH);
+                            channel.setBypassDnd(true);
+                            channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
+                            nm.createNotificationChannel(channel);
+                        }
+
+                        Intent intent = new Intent(activity, activity.getClass());
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                        PendingIntent pi = PendingIntent.getActivity(activity, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+                        NotificationCompat.Builder builder = new NotificationCompat.Builder(activity, "urgent_calls")
+                            .setSmallIcon(android.R.drawable.ic_menu_call)
+                            .setContentTitle("🚨 ¡ALGUIEN EN LA PUERTA!")
+                            .setContentText("Toca para contestar")
+                            .setPriority(NotificationCompat.PRIORITY_MAX)
+                            .setCategory(NotificationCompat.CATEGORY_CALL)
+                            .setFullScreenIntent(pi, true)
+                            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                            .setOngoing(true);
+
+                        nm.notify(999, builder.build());
+                        call.resolve();
+                    } catch (Exception e) { call.reject(e.getMessage()); }
+                });
             }
-        } catch (e) {}
-        if ('vibrate' in navigator) navigator.vibrate(pattern);
-    }
 
-    async function requestWakeLock() {
-        if (window.Capacitor) {
-            try { await WakeLock.acquire(); } catch (err) {}
-        }
-    }
-
-    window.iniciarApp = async function() {
-        try {
-            log('🚀 INICIANDO V12.0...');
-            const onboarding = document.getElementById('onboarding');
-            if(onboarding) {
-                onboarding.style.opacity = '0';
-                setTimeout(() => onboarding.remove(), 500);
+            @PluginMethod
+            public void endCall(PluginCall call) {
+                if (currentRingtone != null) currentRingtone.stop();
+                if (vibrator != null) vibrator.cancel();
+                NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+                nm.cancel(999);
+                call.resolve();
             }
-            await requestWakeLock();
-            if (window.Capacitor) {
-                try { await CallPlugin.requestPermissions(); } catch (e) {}
-                await iniciarCapacitor();
-            }
-            iniciarVisualizador();
-            if (db) {
-                iniciarEscuchaFirebase();
-            }
-            setStatus("✅ Listo para recibir llamadas");
-            window.cargarConfiguracionRingtone();
-        } catch (e) { 
-            log('❌ ERROR: ' + e.message);
-        }
-    };
-
-    function iniciarEscuchaFirebase() {
-        if (firestoreUnsubscribe) firestoreUnsubscribe();
-        const query = db.collection('llamadas');
-        firestoreUnsubscribe = query.onSnapshot((snapshot) => {
-            log(\`🔔 Firebase: \${snapshot.size} docs\`);
-            snapshot.docChanges().forEach((change) => {
-                const data = change.doc.data();
-                const id = change.doc.id;
-                if (data.sala === ROOM_NAME && (data.estado === 'pendiente' || data.estado === 'llamando')) {
-                    if (currentLlamadaId !== id) {
-                        currentLlamadaId = id;
-                        log(\`🚨 LLAMADA: \${id}\`);
-                        startRinging();
-                        traerAlFrente();
+            
+            @PluginMethod
+            public void vibrate(PluginCall call) {
+                vibrator = (Vibrator) getContext().getSystemService(Context.VIBRATOR_SERVICE);
+                if (vibrator != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        vibrator.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE));
+                    } else {
+                        vibrator.vibrate(200);
                     }
                 }
-            });
-        });
-    }
-
-    async function iniciarCapacitor() {
-        if (!PushNotifications) return;
-        try {
-            let perm = await PushNotifications.requestPermissions();
-            if (perm.receive === 'granted') {
-                await PushNotifications.register();
-                PushNotifications.addListener('registration', (token) => registrarEnServidor(token.value));
-                PushNotifications.addListener('pushNotificationReceived', () => traerAlFrente());
+                call.resolve();
             }
-        } catch (e) {}
-    }
-
-    async function traerAlFrente() {
-        const now = Date.now();
-        if (isProcessingCall && (now - lastCallTimestamp) < 5000) return;
-        isProcessingCall = true;
-        lastCallTimestamp = now;
-        const ringtoneType = localStorage.getItem('selected_ringtone') || 'TYPE_RINGTONE';
-        if (window.Capacitor) {
-            try {
-                await CallPlugin.showIncomingCall({ ringtoneType: ringtoneType });
-                log('✅ LLAMADA NATIVA ACTIVADA');
-            } catch (e) { log('⚠️ Error Plugin: ' + e.message); }
         }
-        vibrar([500, 200, 500]);
-        setTimeout(() => { isProcessingCall = false; }, 5000);
-    }
-
-    async function registrarEnServidor(token) {
-        try {
-            await fetch(API_URL_REGISTRO, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token, sala: ROOM_NAME })
-            });
-        } catch (e) {}
-    }
-
-    window.contestarLlamada = async function() {
-        log('📞 Contestando...');
-        stopRinging();
-        try {
-            if (currentLlamadaId) await db.collection('llamadas').doc(currentLlamadaId).update({ estado: 'aceptada' });
-            const res = await fetch(API_URL_TOKEN, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ identidad: 'Admin-' + Date.now(), sala: ROOM_NAME })
-            });
-            const data = await res.json();
-            activeRoom = await connect(data.token, { name: ROOM_NAME, audio: true, video: false });
-            activeRoom.on('participantConnected', p => participantConnected(p));
-            activeRoom.on('disconnected', () => finalizarLlamada());
-            setStatus("🟢 EN LLAMADA");
-            document.getElementById('controls-incoming').classList.add('hidden');
-            document.getElementById('controls-active').classList.remove('hidden');
-        } catch (e) { log('❌ Error: ' + e.message); }
-    };
-
-    window.rechazarLlamada = async function() {
-        log('❌ Rechazando...');
-        stopRinging();
-        if (currentLlamadaId) await db.collection('llamadas').doc(currentLlamadaId).update({ estado: 'rechazada' });
-        finalizarLlamada();
-    };
-
-    window.finalizarLlamada = function() {
-        if (activeRoom) activeRoom.disconnect();
-        activeRoom = null;
-        currentLlamadaId = null;
-        stopRinging();
-        if (window.Capacitor) CallPlugin.endCall();
-        setStatus("✅ Listo");
-        document.getElementById('controls-incoming').classList.add('hidden');
-        document.getElementById('controls-active').classList.add('hidden');
-    };
-
-    function startRinging() {
-        document.getElementById('controls-incoming').classList.remove('hidden');
-        setStatus("🔔 TIMBRE SONANDO");
-    }
-
-    function stopRinging() {
-        if (window.Capacitor) CallPlugin.endCall();
-    }
-
-    function participantConnected(participant) {
-        log(\`👤 Conectado: \${participant.identity}\`);
-        participant.on('trackSubscribed', track => {
-            if (track.kind === 'audio') {
-                const el = track.attach();
-                document.body.appendChild(el);
+        CALLEOF
+        
+        cat > android/app/src/main/java/com/mipuerta/app/MainActivity.java << 'MAINEOF'
+        package com.mipuerta.app;
+        import android.os.Bundle;
+        import com.getcapacitor.BridgeActivity;
+        public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+                registerPlugin(WakeLockPlugin.class);
+                registerPlugin(CallPlugin.class);
+                super.onCreate(savedInstanceState);
             }
-        });
-    }
-
-    function setStatus(msg) { 
-        const el = document.getElementById('status-text');
-        if(el) el.innerText = msg; 
-    }
-
-    function iniciarVisualizador() {
-        const canvas = document.getElementById('wave-visualizer');
-        if(!canvas) return;
-        const ctx = canvas.getContext('2d');
-        canvas.width = window.innerWidth; 
-        canvas.height = 300;
-        function draw() {
-            requestAnimationFrame(draw);
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
         }
-        draw();
-    }
+        MAINEOF
 
-    window.cambiarRingtone = function(val) {
-        localStorage.setItem('selected_ringtone', val);
-        log('🎵 Tono: ' + val);
-    };
+    - name: Configure AndroidManifest
+      run: |
+        MANIFEST="android/app/src/main/AndroidManifest.xml"
+        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.DISABLE_KEYGUARD" /><uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" /><uses-permission android:name="android.permission.READ_PHONE_STATE" /><uses-permission android:name="android.permission.CALL_PHONE" />'
+        sed -i "s|<application|$PERMISSIONS<application|g" $MANIFEST
+        sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleInstance" android:showWhenLocked="true" android:turnScreenOn="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
 
-    window.cargarConfiguracionRingtone = function() {
-        const guardado = localStorage.getItem('selected_ringtone') || 'TYPE_RINGTONE';
-        const select = document.getElementById('ringtone-type');
-        if (select) select.value = guardado;
-    };
-}
+    - name: Create google-services.json
+      run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
+
+    - name: Sync Capacitor
+      run: npx cap sync
+    
+    - name: Grant execute permission
+      run: chmod +x android/gradlew
+    
+    - name: Build APK
+      run: |
+        cd android
+        ./gradlew assembleDebug --no-daemon
+    
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-debug-fast-fix
+        path: android/app/build/outputs/apk/debug/app-debug.apk
