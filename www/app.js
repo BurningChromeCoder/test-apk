@@ -593,15 +593,20 @@ async function initApp() {
     function iniciarEscuchaFirebase() {
         try {
             log('👂 Configurando listener Firebase...');
-            if (firestoreUnsubscribe) firestoreUnsubscribe();
-            const query = db.collection('llamadas').where('sala', '==', ROOM_NAME);
+            if (firestoreUnsubscribe) firestoreUnsubscrib            // Escuchar todas las llamadas para depuración, filtrando luego por sala
+            const query = db.collection('llamadas');
             firestoreUnsubscribe = query.onSnapshot((snapshot) => {
-                log(`🔔 Firebase: ${snapshot.size} llamada(s)`);
+                log(`🔔 Firebase: ${snapshot.size} docs en total`);
                 snapshot.docChanges().forEach((change) => {
-                    if (change.type === 'added' || change.type === 'modified') {
                         const data = change.doc.data();
                         const id = change.doc.id;
-                        if (data.estado !== 'pendiente' && data.estado !== 'llamando') return;
+                        log(`👀 Cambio en doc ${id}: sala=${data.sala}, estado=${data.estado}`);
+                        
+                        if (data.sala !== ROOM_NAME) {
+                            log(`⏭️ Ignorando sala ajena: ${data.sala}`);
+                            return;
+                        }
+                        if (data.estado !== 'pendiente' && data.estado !== 'llamando') return;                if (data.estado !== 'pendiente' && data.estado !== 'llamando') return;
                         if (currentLlamadaId === id) {
                             log('⚠️ Llamada ya en proceso, ignorando duplicado Firestore');
                             return;
@@ -644,7 +649,8 @@ async function initApp() {
 
     async function limpiarLlamadasViejas() {
         try {
-            const cincominutosAtras = firebase.firestore.Timestamp.fromDate(new Date(Date.now() - 5 * 60 * 1000));
+            // Aumentamos a 30 minutos para pruebas
+            const cincominutosAtras = firebase.firestore.Timestamp.fromDate(new Date(Date.now() - 30 * 60 * 1000));
             const snapshot = await db.collection('llamadas').where('timestamp', '<', cincominutosAtras).get();
             if (snapshot.empty) {
                 log('✅ BD limpia');
