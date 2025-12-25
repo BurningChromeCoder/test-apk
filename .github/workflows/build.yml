@@ -128,6 +128,7 @@ jobs:
                 Log.d(TAG, "onCreateIncomingConnection");
                 activeConnection = new CallConnection();
                 activeConnection.setConnectionCapabilities(Connection.CAPABILITY_HOLD | Connection.CAPABILITY_SUPPORT_HOLD | Connection.CAPABILITY_MUTE);
+                activeConnection.setAudioModeIsVoip(true);
                 activeConnection.setAddress(Uri.parse("tel:Visitante"), TelecomManager.PRESENTATION_ALLOWED);
                 activeConnection.setCallerDisplayName("🔔 Timbre Puerta", TelecomManager.PRESENTATION_ALLOWED);
                 activeConnection.setRinging();
@@ -179,12 +180,14 @@ jobs:
         import android.content.pm.PackageManager;
         import android.os.Build;
         import android.os.Bundle;
+        import android.os.PowerManager;
         import android.os.VibrationEffect;
         import android.os.Vibrator;
         import android.telecom.PhoneAccount;
         import android.telecom.PhoneAccountHandle;
         import android.telecom.TelecomManager;
         import android.util.Log;
+        import android.view.WindowManager;
         import androidx.core.app.NotificationCompat;
         import androidx.core.content.ContextCompat;
         import com.getcapacitor.JSObject;
@@ -213,7 +216,12 @@ jobs:
                 Activity activity = getActivity();
                 ComponentName componentName = new ComponentName(activity, CallConnectionService.class);
                 phoneAccountHandle = new PhoneAccountHandle(componentName, "MiPuertaAccount");
-                PhoneAccount phoneAccount = PhoneAccount.builder(phoneAccountHandle, "MiPuerta").setCapabilities(PhoneAccount.CAPABILITY_CALL_PROVIDER).setHighlightColor(0xFF2ECC71).setShortDescription("Timbre MiPuerta").setSupportedUriSchemes(java.util.Arrays.asList("tel")).build();
+                PhoneAccount phoneAccount = PhoneAccount.builder(phoneAccountHandle, "MiPuerta")
+                    .setCapabilities(PhoneAccount.CAPABILITY_SELF_MANAGED | PhoneAccount.CAPABILITY_SUPPORTS_VIDEO_CALLING)
+                    .setHighlightColor(0xFF2ECC71)
+                    .setShortDescription("Timbre MiPuerta")
+                    .setSupportedUriSchemes(java.util.Arrays.asList("tel"))
+                    .build();
                 telecomManager.registerPhoneAccount(phoneAccount);
                 Log.d(TAG, "PhoneAccount registrada");
             }
@@ -224,6 +232,7 @@ jobs:
                     channel.setDescription("Notificaciones de timbre");
                     channel.enableVibration(true);
                     channel.setVibrationPattern(new long[]{0, 1000, 500, 1000});
+                    channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
                     NotificationManager nm = (NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
                     nm.createNotificationChannel(channel);
                 }
@@ -245,7 +254,9 @@ jobs:
             @PluginMethod
             public void requestPermissions(PluginCall call) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    String[] permissions = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new String[]{Manifest.permission.READ_PHONE_STATE, Manifest.permission.CALL_PHONE, Manifest.permission.MANAGE_OWN_CALLS, Manifest.permission.VIBRATE} : new String[]{Manifest.permission.READ_PHONE_STATE, Manifest.permission.CALL_PHONE, Manifest.permission.VIBRATE};
+                    String[] permissions = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? 
+                        new String[]{Manifest.permission.READ_PHONE_STATE, Manifest.permission.CALL_PHONE, Manifest.permission.MANAGE_OWN_CALLS, Manifest.permission.VIBRATE} : 
+                        new String[]{Manifest.permission.READ_PHONE_STATE, Manifest.permission.CALL_PHONE, Manifest.permission.VIBRATE};
                     requestPermissionForAliases(permissions, call, "permissionsCallback");
                 } else {
                     JSObject ret = new JSObject();
@@ -253,13 +264,10 @@ jobs:
                     call.resolve(ret);
                 }
             }
-            // --- ESTA ES LA FUNCIÓN QUE FALTABA ---
             @PermissionCallback
             private void permissionsCallback(PluginCall call) {
-                // Cuando el usuario responde, volvemos a chequear y devolvemos el resultado
                 this.checkPermissions(call);
             }
-            // --------------------------------------            
             @PluginMethod
             public void vibrate(PluginCall call) {
                 Activity activity = getActivity();
@@ -270,47 +278,65 @@ jobs:
                     } else {
                         vibrator.vibrate(new long[]{0, 500, 200, 500, 200, 500}, -1);
                     }
-                    Log.d(TAG, "✅ Vibración ejecutada");
                 }
-                JSObject ret = new JSObject();
-                ret.put("success", true);
-                call.resolve(ret);
+                call.resolve();
             }
             @PluginMethod
             public void showIncomingCall(PluginCall call) {
                 Activity activity = getActivity();
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-                    call.reject("API 23+ requerida");
-                    return;
-                }
                 try {
+                    // 1. FORZAR ENCENDIDO DE PANTALLA
+                    PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                    PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE, "MiPuerta:CallWakeup");
+                    wl.acquire(10000);
+
+                    // 2. CONFIGURAR ACTIVITY PARA LOCKSCREEN
+                    activity.runOnUiThread(() -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                            activity.setShowWhenLocked(true);
+                            activity.setTurnScreenOn(true);
+                        } else {
+                            activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
+                        }
+                    });
+
+                    // 3. LANZAR LLAMADA TELECOM
                     Bundle extras = new Bundle();
                     extras.putString("caller_name", "🔔 Visitante en Puerta");
                     telecomManager.addNewIncomingCall(phoneAccountHandle, extras);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        Intent fullScreenIntent = new Intent(activity, activity.getClass());
-                        fullScreenIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                        PendingIntent fullScreenPendingIntent = PendingIntent.getActivity(activity, 0, fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                        NotificationCompat.Builder builder = new NotificationCompat.Builder(activity, "incoming_calls").setSmallIcon(android.R.drawable.sym_action_call).setContentTitle("🔔 Timbre").setContentText("Alguien está en la puerta").setPriority(NotificationCompat.PRIORITY_MAX).setCategory(NotificationCompat.CATEGORY_CALL).setFullScreenIntent(fullScreenPendingIntent, true).setAutoCancel(true);
-                        NotificationManager nm = (NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
-                        nm.notify(1, builder.build());
-                    }
-                    vibrate(call);
-                    Log.d(TAG, "Llamada nativa mostrada");
+
+                    // 4. NOTIFICACIÓN FULL SCREEN (CRÍTICO PARA ANDROID 10+)
+                    Intent fullScreenIntent = new Intent(activity, activity.getClass());
+                    fullScreenIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    PendingIntent fullScreenPendingIntent = PendingIntent.getActivity(activity, 0, fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+                    NotificationCompat.Builder builder = new NotificationCompat.Builder(activity, "incoming_calls")
+                        .setSmallIcon(android.R.drawable.sym_action_call)
+                        .setContentTitle("🔔 Timbre")
+                        .setContentText("Alguien está en la puerta")
+                        .setPriority(NotificationCompat.PRIORITY_MAX)
+                        .setCategory(NotificationCompat.CATEGORY_CALL)
+                        .setFullScreenIntent(fullScreenPendingIntent, true)
+                        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                        .setOngoing(true)
+                        .setAutoCancel(false);
+
+                    NotificationManager nm = (NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
+                    nm.notify(1, builder.build());
+
                     JSObject ret = new JSObject();
                     ret.put("success", true);
                     call.resolve(ret);
                 } catch (Exception e) {
-                    Log.e(TAG, "Error: " + e.getMessage());
                     call.reject("Error: " + e.getMessage());
                 }
             }
             @PluginMethod
             public void endCall(PluginCall call) {
                 CallConnectionService.endCall();
-                JSObject ret = new JSObject();
-                ret.put("success", true);
-                call.resolve(ret);
+                NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+                nm.cancel(1);
+                call.resolve();
             }
             public static void notifyCallAnswered() {
                 if (instance != null) {
@@ -332,36 +358,37 @@ jobs:
         cat > android/app/src/main/java/com/mipuerta/app/MainActivity.java << 'MAINEOF'
         package com.mipuerta.app;
         import android.os.Bundle;
+        import android.view.WindowManager;
+        import android.os.Build;
         import com.getcapacitor.BridgeActivity;
         public class MainActivity extends BridgeActivity {
             @Override
             public void onCreate(Bundle savedInstanceState) {
-                // 1. PRIMERO: Registramos los plugins para que Capacitor sepa que existen
                 registerPlugin(WakeLockPlugin.class);
                 registerPlugin(CallPlugin.class);
-                
-                // 2. DESPUÉS: Arrancamos Capacitor (super.onCreate)
                 super.onCreate(savedInstanceState);
+                
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                    setShowWhenLocked(true);
+                    setTurnScreenOn(true);
+                } else {
+                    getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED |
+                                      WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON |
+                                      WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON |
+                                      WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
+                }
             }
         }
         MAINEOF
         
-        echo "✅ Todos los archivos Java creados"
-# ... (mantén el inicio igual hasta 'Create All Native Plugins')
-
-    - name: Create All Native Plugins
-      run: |
-        mkdir -p android/app/src/main/java/com/mipuerta/app
-        
-        # [Aquí va el código de CallPlugin.java con las mejoras de WakeLock que he preparado]
-        # He optimizado showIncomingCall para que use PowerManager y encienda la pantalla.
+        echo "✅ Todos los archivos Java creados con mejoras de WakeUp"
 
     - name: Configure AndroidManifest
       run: |
         MANIFEST="android/app/src/main/AndroidManifest.xml"
         PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.CAMERA" /><uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.FOREGROUND_SERVICE" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" /><uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" /><uses-permission android:name="android.permission.DISABLE_KEYGUARD" /><uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" /><uses-permission android:name="android.permission.READ_PHONE_STATE" /><uses-permission android:name="android.permission.CALL_PHONE" /><uses-permission android:name="android.permission.MANAGE_OWN_CALLS" /><uses-permission android:name="android.permission.BIND_TELECOM_CONNECTION_SERVICE" /><uses-feature android:name="android.hardware.camera" android:required="false" />'
         sed -i "s|<application|$PERMISSIONS<application|g" $MANIFEST
-        sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleTask" android:showWhenLocked="true" android:turnScreenOn="true" android:excludeFromRecents="false" android:showForAllUsers="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
+        sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleInstance" android:showWhenLocked="true" android:turnScreenOn="true" android:excludeFromRecents="false" android:showForAllUsers="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
         sed -i 's|</application>|<service android:name=".CallConnectionService" android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE" android:exported="true"><intent-filter><action android:name="android.telecom.ConnectionService" /></intent-filter></service></application>|' $MANIFEST
 
     - name: Create google-services.json
