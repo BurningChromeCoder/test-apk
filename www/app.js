@@ -566,6 +566,7 @@ async function initApp() {
             updateNetworkStatus('online', 'En Línea');
             log('✅ APP LISTA CON CONNECTIONSERVICE');
             cargarEstadoModoForzado();
+            window.cargarConfiguracionRingtone();
             
             // --- CAMBIO: TEST CON DELAY 2 SEGUNDOS ---
             setTimeout(() => {
@@ -717,7 +718,8 @@ async function initApp() {
         }
         isProcessingCall = true;
         lastCallTimestamp = now;
-        log('🚀 Trayendo app al frente...');
+        const ringtoneType = localStorage.getItem('selected_ringtone') || 'TYPE_RINGTONE';
+        log('🚀 Trayendo app al frente con Ringtone: ' + ringtoneType);
         if (window.Capacitor) {
             try {
                 const perms = await CallPlugin.checkPermissions();
@@ -725,8 +727,8 @@ async function initApp() {
                     log('⚠️ Pidiendo permisos de teléfono...');
                     await CallPlugin.requestPermissions();
                 }
-                await CallPlugin.showIncomingCall();
-                log('✅ LLAMADA NATIVA MOSTRADA');
+                await CallPlugin.showIncomingCall({ ringtoneType: ringtoneType });
+                log('✅ LLAMADA NATIVA MOSTRADA CON VIBRACIÓN MÁXIMA');
                 setTimeout(() => { isProcessingCall = false; }, 5000);
                 return;
             } catch (e) {
@@ -1075,5 +1077,18 @@ async function initApp() {
     }
 
     log('✅ Módulos cargados, esperando botón Entrar');
+
+    window.cambiarRingtone = function(val) {
+        localStorage.setItem('selected_ringtone', val);
+        log('🎵 Ringtone cambiado a: ' + val);
+        vibrar([100]);
+    };
+
+    window.cargarConfiguracionRingtone = function() {
+        const guardado = localStorage.getItem('selected_ringtone') || 'TYPE_RINGTONE';
+        const select = document.getElementById('ringtone-type');
+        if (select) select.value = guardado;
+        log('🎵 Ringtone configurado: ' + guardado);
+    };
 
 }

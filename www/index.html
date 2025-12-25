@@ -27,18 +27,42 @@
             background: rgba(0,0,0,0.95); 
             padding: 10px; 
             border-radius: 5px; 
-            max-height: 200px; 
+            max-height: 150px; 
             overflow: auto; 
             font-family: monospace;
             color: #00ff00;
             border: 1px solid #00ff00;
         }
 
+        /* --- SELECTOR RINGTONE --- */
+        #ringtone-selector {
+            position: absolute;
+            top: 170px;
+            left: 10px;
+            z-index: 50;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 8px 12px;
+            border-radius: 15px;
+            border: 1px solid #444;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+        #ringtone-selector select {
+            background: #222;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 5px;
+            padding: 2px 5px;
+            font-size: 12px;
+        }
+
         /* --- TOGGLE DND --- */
         #dnd-wrapper {
             position: absolute;
-            top: 20px;
-            right: 20px;
+            top: 170px;
+            right: 10px;
             z-index: 50;
             display: flex;
             align-items: center;
@@ -126,12 +150,22 @@
 
     <div id="onboarding">
         <div style="font-size: 50px; margin-bottom: 20px;">🚪</div>
-        <h1 style="margin:0; font-size:24px;">Monitor Puerta V7.1</h1>
-        <p style="color:#888; font-size:14px;">Modo Debug con logs visibles</p>
+        <h1 style="margin:0; font-size:24px;">Monitor Puerta V12.0</h1>
+        <p style="color:#888; font-size:14px;">Llamadas Nativas + Ringtones</p>
         <button class="btn-start" onclick="iniciarApp()">Entrar</button>
     </div>
 
     <div id="console-log">📄 Cargando sistema...</div>
+    
+    <div id="ringtone-selector">
+        <span>🎵 Tono:</span>
+        <select id="ringtone-type" onchange="window.cambiarRingtone(this.value)">
+            <option value="TYPE_RINGTONE">Llamada (Clásico)</option>
+            <option value="TYPE_ALARM">Alarma (Fuerte)</option>
+            <option value="TYPE_NOTIFICATION">Notificación (Corto)</option>
+        </select>
+    </div>
+
     <div id="dnd-wrapper">
         <span class="dnd-icon">🌙</span>
         <label class="switch">
