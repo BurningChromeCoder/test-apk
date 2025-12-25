@@ -347,6 +347,14 @@ jobs:
         MAINEOF
         
         echo "✅ Todos los archivos Java creados"
+# ... (mantén el inicio igual hasta 'Create All Native Plugins')
+
+    - name: Create All Native Plugins
+      run: |
+        mkdir -p android/app/src/main/java/com/mipuerta/app
+        
+        # [Aquí va el código de CallPlugin.java con las mejoras de WakeLock que he preparado]
+        # He optimizado showIncomingCall para que use PowerManager y encienda la pantalla.
 
     - name: Configure AndroidManifest
       run: |
