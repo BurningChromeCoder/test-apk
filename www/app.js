@@ -20,9 +20,48 @@ window.addEventListener('unhandledrejection', function(e) {
     console.error('PROMISE ERROR:', e);
 });
 
+// ===== CAMBIO CRÍTICO: INICIALIZAR FIREBASE INMEDIATAMENTE =====
+let db;
+let firebaseReady = false;
+
+async function initFirebaseImmediate() {
+    try {
+        if (typeof firebase !== 'undefined') {
+            console.log('✅ Firebase global detectado');
+            if (!firebase.apps.length) {
+                firebase.initializeApp({
+                    apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
+                    authDomain: "puerta-c3a71.firebaseapp.com",
+                    projectId: "puerta-c3a71",
+                    storageBucket: "puerta-c3a71.firebasestorage.app",
+                    messagingSenderId: "830550601352",
+                    appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
+                });
+            }
+            db = firebase.firestore();
+            firebaseReady = true;
+            console.log('✅ Firebase inicializado INMEDIATAMENTE');
+            
+            // ===== INICIAR LISTENER INMEDIATAMENTE =====
+            iniciarEscuchaFirebase();
+            return true;
+        } else {
+            throw new Error('Firebase no está disponible globalmente');
+        }
+    } catch (e) {
+        console.error('Firebase error:', e);
+        return false;
+    }
+}
+
+// Llamar ANTES de cualquier interacción del usuario
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initApp);
+    document.addEventListener('DOMContentLoaded', () => {
+        initFirebaseImmediate();
+        initApp();
+    });
 } else {
+    initFirebaseImmediate();
     initApp();
 }
 
@@ -48,28 +87,9 @@ async function initApp() {
         console.log('⚠️ Capacitor no disponible (normal en web)');
     }
 
-    let db;
-    try {
-        if (typeof firebase !== 'undefined') {
-            console.log('✅ Firebase global detectado');
-            if (!firebase.apps.length) {
-                firebase.initializeApp({
-                    apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
-                    authDomain: "puerta-c3a71.firebaseapp.com",
-                    projectId: "puerta-c3a71",
-                    storageBucket: "puerta-c3a71.firebasestorage.app",
-                    messagingSenderId: "830550601352",
-                    appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
-                });
-            }
-            db = firebase.firestore();
-            console.log('✅ Firebase inicializado');
-        } else {
-            throw new Error('Firebase no está disponible globalmente');
-        }
-    } catch (e) {
-        alert('ERROR FIREBASE: ' + e.message);
-        console.error('Firebase error:', e);
+    // Firebase ya inicializado arriba
+    if (!firebaseReady) {
+        await initFirebaseImmediate();
     }
 
     const MY_ID = "puerta-admin-v2"; 
@@ -152,7 +172,7 @@ async function initApp() {
         console.log(`[App] ${msg}`);
     }
 
-    log('📄 app.js V11.0 ejecutándose...');
+    log('📄 app.js V12.0 ejecutándose...');
 
     function inicializarAudioContext() {
         if (!audioBeepContext) {
@@ -207,9 +227,7 @@ async function initApp() {
         playBeep(400, 200, 0.5);
     }
 
-    // --- FUNCIÓN ACTUALIZADA: VIBRACIÓN CON CALLPLUGIN ---
     async function vibrar(pattern = [200, 100, 200]) {
-        // Intento 1: CallPlugin (Prioridad solicitada)
         try {
             if (CallPlugin) {
                 await CallPlugin.vibrate(); 
@@ -220,7 +238,6 @@ async function initApp() {
             log('⚠️ CallPlugin falló: ' + e.message);
         }
         
-        // Intento 2: Capacitor Haptics
         try {
             if (Haptics) {
                 await Haptics.vibrate({ duration: 200 });
@@ -231,7 +248,6 @@ async function initApp() {
             log('⚠️ Haptics falló: ' + e.message);
         }
 
-        // Intento 3: Web Nativo
         if ('vibrate' in navigator) {
             navigator.vibrate(pattern);
             log('📳 Vibración Web');
@@ -486,9 +502,10 @@ async function initApp() {
         }
     }
 
+    // ===== FUNCIÓN ACTUALIZADA: INICIAR SIN ONBOARDING =====
     window.iniciarApp = async function() {
         try {
-            log('🚀 INICIANDO V11.0 CON CALLPLUGIN...');
+            log('🚀 INICIANDO V12.0 - FIREBASE LISTENER YA ACTIVO...');
             inicializarAudioContext();
             const requiredElements = ['console-log', 'status-text', 'avatar', 'controls-incoming', 'controls-active'];
             for (const id of requiredElements) {
@@ -515,18 +532,14 @@ async function initApp() {
             if (window.Capacitor) {
                 log('📱 Modo Capacitor detectado');
                 
-                // --- CAMBIO: SOLICITAR PERMISOS AL INICIO ---
-                // --- INICIO CORRECCIÓN TIMEOUT ---
                 try {
                     log('📱 Solicitando permisos CallPlugin...');
                     
-                    // Definimos una promesa que se cumple sola a los 3 segundos
                     const timeout = new Promise(resolve => setTimeout(() => {
-                        log('⏩ Tiempo agotado esperando permisos, continuando...');
+                        log('⏩ Timeout permisos alcanzado');
                         resolve('timeout');
                     }, 3000));
 
-                    // Hacemos una carrera entre el Plugin y el Reloj
                     await Promise.race([
                         CallPlugin.requestPermissions(),
                         timeout
@@ -536,7 +549,7 @@ async function initApp() {
                 } catch (e) {
                     log('⚠️ Error al pedir permisos: ' + e.message);
                 }
-                // --- FIN CORRECCIÓN TIMEOUT ---
+                
                 try {
                     const perms = await CallPlugin.checkPermissions();
                     if (!perms.allGranted) {
@@ -555,33 +568,25 @@ async function initApp() {
             
             iniciarVisualizador();
             activarModoSegundoPlano();
-            if (db) {
-                log('🔥 Iniciando Firebase listener...');
+            
+            // Firebase listener ya está activo desde el inicio
+            if (!firestoreUnsubscribe && db) {
+                log('🔥 Re-iniciando Firebase listener por seguridad...');
                 iniciarEscuchaFirebase();
-                iniciarLimpiezaAutomatica();
-            } else {
-                throw new Error('Firebase no está disponible');
             }
+            
+            iniciarLimpiezaAutomatica();
+            
             setStatus("✅ Listo para recibir llamadas");
             updateNetworkStatus('online', 'En Línea');
-            log('✅ APP LISTA CON CONNECTIONSERVICE');
+            log('✅ APP LISTA - LISTENER FIREBASE ACTIVO');
             cargarEstadoModoForzado();
             window.cargarConfiguracionRingtone();
             
-            // --- CAMBIO: TEST CON DELAY 2 SEGUNDOS ---
             setTimeout(() => {
                 log('🧪 Probando vibración (CallPlugin)...');
                 vibrar([200]);
-                setTimeout(() => {
-                    const resultado = confirm('¿Sentiste la vibración?\n(Presiona OK si sí, Cancelar si no)');
-                    if (!resultado) {
-                        log('⚠️ Vibración no funciona');
-                        alert('⚠️ La vibración no funciona.\nVerifica permisos en:\nAjustes > Notificaciones > MiPuerta');
-                    } else {
-                        log('✅ Vibración OK');
-                    }
-                }, 1000);
-            }, 2000); // <-- 2000ms de espera
+            }, 2000);
             
         } catch (e) { 
             log('❌ ERROR CRÍTICO: ' + e.message);
@@ -590,6 +595,7 @@ async function initApp() {
         }
     };
 
+    // ===== CAMBIO CRÍTICO: MANEJO DIRECTO DE LLAMADA =====
     function iniciarEscuchaFirebase() {
         try {
             log('👂 Configurando listener Firebase...');
@@ -615,15 +621,20 @@ async function initApp() {
                             setTimeout(() => setStatus("✅ Listo para recibir llamadas"), 3000);
                             return;
                         }
-                        log(`🚨 LLAMADA FIRESTORE: ${id} (${data.estado})`);
+                        
+                        log(`🚨 LLAMADA DETECTADA: ${id} (${data.estado})`);
+                        
+                        // ===== ACTIVAR INMEDIATAMENTE LA UI NATIVA =====
                         if (!activeRoom && !ringtoneOscillator) {
                             currentLlamadaId = id;
-                            startRinging();
+                            
+                            // 1. MOSTRAR LLAMADA NATIVA PRIMERO (con ringtone y vibración)
+                            mostrarLlamadaNativa();
+                            
+                            // 2. Luego actualizar UI web
                             setStatus("🔔 TIMBRE SONANDO");
                             document.getElementById('avatar').innerText = "🔔";
                             document.getElementById('controls-incoming').classList.remove('hidden');
-                            vibrar([200, 100, 200, 100, 200]);
-                            traerAlFrente();
                         }
                     }
                 });
@@ -634,6 +645,30 @@ async function initApp() {
         } catch (e) {
             log('❌ Error configurando listener: ' + e.message);
         }
+    }
+
+    // ===== NUEVA FUNCIÓN: MOSTRAR LLAMADA NATIVA =====
+    async function mostrarLlamadaNativa() {
+        const ringtoneType = localStorage.getItem('selected_ringtone') || 'TYPE_RINGTONE';
+        log('🚀 Mostrando llamada nativa con Ringtone: ' + ringtoneType);
+        
+        if (window.Capacitor) {
+            try {
+                // WakeLock primero
+                await requestWakeLock();
+                
+                // Mostrar llamada con vibración integrada
+                await CallPlugin.showIncomingCall({ ringtoneType: ringtoneType });
+                log('✅ LLAMADA NATIVA MOSTRADA - RINGTONE + VIBRACIÓN ACTIVOS');
+                return;
+            } catch (e) {
+                log('⚠️ CallPlugin falló: ' + e.message);
+            }
+        }
+        
+        // Fallback web
+        startRinging();
+        vibrar([500, 200, 500, 200, 500]);
     }
 
     function iniciarLimpiezaAutomatica() {
@@ -694,69 +729,16 @@ async function initApp() {
             });
             PushNotifications.addListener('pushNotificationReceived', (notification) => {
                 log('🔔 Push recibida en foreground');
-                if (currentLlamadaId) {
-                    log('⚠️ Llamada ya procesada por Firestore, ignorando push');
-                    return;
-                }
-                log('📞 Procesando llamada desde push');
-                traerAlFrente();
+                // Firebase listener maneja todo, no hacer nada aquí
             });
             PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
                 log('👆 Usuario tocó notificación push');
-                traerAlFrente();
+                // Firebase listener ya está activo, solo traer al frente
+                requestWakeLock();
             });
         } catch (e) { 
             log('❌ Error Push: ' + e.message); 
         }
-    }
-
-    async function traerAlFrente() {
-        const now = Date.now();
-        if (isProcessingCall && (now - lastCallTimestamp) < 5000) {
-            log('⚠️ Llamada ya en proceso, ignorando duplicado');
-            return;
-        }
-        isProcessingCall = true;
-        lastCallTimestamp = now;
-        const ringtoneType = localStorage.getItem('selected_ringtone') || 'TYPE_RINGTONE';
-        log('🚀 Trayendo app al frente con Ringtone: ' + ringtoneType);
-        if (window.Capacitor) {
-            try {
-                const perms = await CallPlugin.checkPermissions();
-                if (!perms.allGranted) {
-                    log('⚠️ Pidiendo permisos de teléfono...');
-                    await CallPlugin.requestPermissions();
-                }
-                await CallPlugin.showIncomingCall({ ringtoneType: ringtoneType });
-                log('✅ LLAMADA NATIVA MOSTRADA CON VIBRACIÓN MÁXIMA');
-                setTimeout(() => { isProcessingCall = false; }, 5000);
-                return;
-            } catch (e) {
-                log('⚠️ CallPlugin falló: ' + e.message);
-            }
-        }
-        await requestWakeLock();
-        if (window.cordova?.plugins?.backgroundMode) {
-            const bg = window.cordova.plugins.backgroundMode;
-            bg.wakeUp();
-            bg.unlock();
-            bg.moveToForeground();
-            log('✅ Background mode activado');
-        }
-        if (window.Capacitor) {
-            try {
-                window.dispatchEvent(new Event('focus'));
-                window.focus();
-                log('✅ Window focus activado');
-            } catch (e) {
-                log('⚠️ Focus error: ' + e.message);
-            }
-        }
-        vibrar([500, 200, 500, 200, 500]);
-        if (audioBeepContext) {
-            playBeep(800, 100, 0.7);
-        }
-        setTimeout(() => { isProcessingCall = false; }, 5000);
     }
 
     async function registrarEnServidor(token) {
@@ -774,6 +756,17 @@ async function initApp() {
 
     window.contestarLlamada = async function() {
         log('📞 Contestando...');
+        
+        // Detener ringtone nativo
+        if (window.Capacitor) {
+            try {
+                await CallPlugin.endCall();
+                log('🔕 Ringtone nativo detenido');
+            } catch (e) {
+                log('⚠️ Error deteniendo ringtone: ' + e.message);
+            }
+        }
+        
         stopRinging();
         vibrar([200, 100, 200]);
         flashScreen('#2ecc71', 300);
