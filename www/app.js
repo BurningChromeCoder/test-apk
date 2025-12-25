@@ -281,3 +281,4 @@ async function initApp() {
         if (select) select.value = guardado;
     };
 }
+
