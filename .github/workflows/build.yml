@@ -1,4 +1,4 @@
-name: Build APK Completo - Solución Emergencia 
+name: Build APK Completo - Fix Notificaciones
 
 on:
   push:
@@ -41,38 +41,113 @@ jobs:
         package com.mipuerta.app;
         import android.app.Activity;
         import android.content.Context;
+        import android.os.Build;
         import android.os.PowerManager;
         import android.view.WindowManager;
+        import com.getcapacitor.JSObject;
         import com.getcapacitor.Plugin;
         import com.getcapacitor.PluginCall;
         import com.getcapacitor.PluginMethod;
         import com.getcapacitor.annotation.CapacitorPlugin;
         @CapacitorPlugin(name = "WakeLock")
         public class WakeLockPlugin extends Plugin {
+            private PowerManager.WakeLock wakeLock;
             @PluginMethod
             public void acquire(PluginCall call) {
                 Activity activity = getActivity();
+                if (activity == null) {
+                    call.reject("Activity not available");
+                    return;
+                }
                 activity.runOnUiThread(() -> {
                     try {
-                        PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
-                        PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:Wake");
-                        wl.acquire(10000);
-                        activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                        PowerManager powerManager = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                        if (wakeLock == null) {
+                            wakeLock = powerManager.newWakeLock(
+                                PowerManager.SCREEN_BRIGHT_WAKE_LOCK | 
+                                PowerManager.ACQUIRE_CAUSES_WAKEUP |
+                                PowerManager.ON_AFTER_RELEASE,
+                                "MiPuerta::WakeLock"
+                            );
+                            wakeLock.setReferenceCounted(false);
+                        }
+                        if (!wakeLock.isHeld()) {
+                            wakeLock.acquire(10 * 60 * 1000L);
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                            activity.setShowWhenLocked(true);
+                            activity.setTurnScreenOn(true);
+                        } else {
+                            activity.getWindow().addFlags(
+                                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED |
+                                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON |
+                                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                            );
+                        }
                         call.resolve();
-                    } catch (Exception e) { call.reject(e.getMessage()); }
+                    } catch (Exception e) {
+                        call.reject(e.getMessage());
+                    }
                 });
             }
             @PluginMethod
-            public void release(PluginCall call) { call.resolve(); }
+            public void release(PluginCall call) {
+                if (wakeLock != null && wakeLock.isHeld()) {
+                    wakeLock.release();
+                }
+                call.resolve();
+            }
         }
         WAKEOF
         
+        cat > android/app/src/main/java/com/mipuerta/app/CallConnectionService.java << 'CONNEOF'
+        package com.mipuerta.app;
+        import android.telecom.Connection;
+        import android.telecom.ConnectionRequest;
+        import android.telecom.ConnectionService;
+        import android.telecom.PhoneAccountHandle;
+        import android.telecom.DisconnectCause;
+        import android.util.Log;
+        public class CallConnectionService extends ConnectionService {
+            private static CallConnection activeConnection;
+            @Override
+            public Connection onCreateIncomingConnection(PhoneAccountHandle connectionManagerPhoneAccount, ConnectionRequest request) {
+                activeConnection = new CallConnection();
+                activeConnection.setAudioModeIsVoip(true);
+                activeConnection.setRinging();
+                return activeConnection;
+            }
+            public static void endCall() {
+                if (activeConnection != null) {
+                    activeConnection.setDisconnected(new DisconnectCause(DisconnectCause.LOCAL));
+                    activeConnection.destroy();
+                    activeConnection = null;
+                }
+            }
+            private static class CallConnection extends Connection {
+                @Override
+                public void onAnswer() {
+                    setActive();
+                    CallPlugin.notifyCallAnswered();
+                }
+                @Override
+                public void onReject() {
+                    setDisconnected(new DisconnectCause(DisconnectCause.REJECTED));
+                    destroy();
+                    CallPlugin.notifyCallRejected();
+                }
+            }
+        }
+        CONNEOF
+        
         cat > android/app/src/main/java/com/mipuerta/app/CallPlugin.java << 'CALLEOF'
         package com.mipuerta.app;
+        import android.Manifest;
         import android.app.Activity;
         import android.app.NotificationChannel;
         import android.app.NotificationManager;
         import android.app.PendingIntent;
+        import android.content.ComponentName;
         import android.content.Context;
         import android.content.Intent;
         import android.media.AudioAttributes;
@@ -80,9 +155,13 @@ jobs:
         import android.media.RingtoneManager;
         import android.net.Uri;
         import android.os.Build;
+        import android.os.Bundle;
         import android.os.PowerManager;
         import android.os.VibrationEffect;
         import android.os.Vibrator;
+        import android.telecom.PhoneAccount;
+        import android.telecom.PhoneAccountHandle;
+        import android.telecom.TelecomManager;
         import android.view.WindowManager;
         import androidx.core.app.NotificationCompat;
         import com.getcapacitor.JSObject;
@@ -90,41 +169,83 @@ jobs:
         import com.getcapacitor.PluginCall;
         import com.getcapacitor.PluginMethod;
         import com.getcapacitor.annotation.CapacitorPlugin;
+        import com.getcapacitor.annotation.Permission;
+        import com.getcapacitor.annotation.PermissionCallback;
 
-        @CapacitorPlugin(name = "CallPlugin")
+        @CapacitorPlugin(name = "CallPlugin", permissions = {
+            @Permission(alias = "phone", strings = {Manifest.permission.READ_PHONE_STATE, Manifest.permission.CALL_PHONE}),
+            @Permission(alias = "vibrate", strings = {Manifest.permission.VIBRATE})
+        })
         public class CallPlugin extends Plugin {
+            private static CallPlugin instance;
+            private TelecomManager telecomManager;
+            private PhoneAccountHandle phoneAccountHandle;
             private Ringtone currentRingtone;
             private Vibrator vibrator;
+
+            @Override
+            public void load() {
+                instance = this;
+                telecomManager = (TelecomManager) getContext().getSystemService(Context.TELECOM_SERVICE);
+                vibrator = (Vibrator) getContext().getSystemService(Context.VIBRATOR_SERVICE);
+                registerPhoneAccount();
+                createNotificationChannel();
+            }
+
+            private void registerPhoneAccount() {
+                ComponentName componentName = new ComponentName(getContext(), CallConnectionService.class);
+                phoneAccountHandle = new PhoneAccountHandle(componentName, "MiPuertaAccount");
+                PhoneAccount phoneAccount = PhoneAccount.builder(phoneAccountHandle, "MiPuerta")
+                    .setCapabilities(PhoneAccount.CAPABILITY_SELF_MANAGED)
+                    .build();
+                telecomManager.registerPhoneAccount(phoneAccount);
+            }
+
+            private void createNotificationChannel() {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    NotificationChannel channel = new NotificationChannel("calls", "Llamadas", NotificationManager.IMPORTANCE_HIGH);
+                    channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
+                    NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+                    nm.createNotificationChannel(channel);
+                }
+            }
 
             @PluginMethod
             public void showIncomingCall(PluginCall call) {
                 String ringtoneType = call.getString("ringtoneType", "TYPE_RINGTONE");
                 Activity activity = getActivity();
-                vibrator = (Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
-
+                
                 activity.runOnUiThread(() -> {
                     try {
-                        // 1. FORZAR ENCENDIDO PANTALLA
+                        // 1. WAKE UP
                         PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
-                        PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:EmergencyWake");
-                        wl.acquire(15000);
-                        activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
+                        PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:Wake");
+                        wl.acquire(10000);
 
-                        // 2. SONIDO DIRECTO
-                        if (currentRingtone != null) currentRingtone.stop();
-                        int type = "TYPE_ALARM".equals(ringtoneType) ? RingtoneManager.TYPE_ALARM : RingtoneManager.TYPE_RINGTONE;
+                        // 2. FLAGS
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                            activity.setShowWhenLocked(true);
+                            activity.setTurnScreenOn(true);
+                        } else {
+                            activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+                        }
+
+                        // 3. SOUND
+                        stopCurrentRingtone();
+                        int type = RingtoneManager.TYPE_RINGTONE;
+                        if ("TYPE_ALARM".equals(ringtoneType)) type = RingtoneManager.TYPE_ALARM;
                         Uri uri = RingtoneManager.getDefaultUri(type);
                         currentRingtone = RingtoneManager.getRingtone(activity, uri);
                         if (currentRingtone != null) {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                                currentRingtone.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build());
+                                currentRingtone.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build());
                             }
                             currentRingtone.play();
                         }
 
-                        // 3. VIBRACIÓN EXTREMA
+                        // 4. VIBRATE
                         if (vibrator != null) {
-                            long[] pattern = {0, 800, 200, 800, 200, 800};
+                            long[] pattern = {0, 1000, 500, 1000};
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
                             } else {
@@ -132,42 +253,63 @@ jobs:
                             }
                         }
 
-                        // 4. NOTIFICACIÓN DE ALTA PRIORIDAD
-                        NotificationManager nm = (NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            NotificationChannel channel = new NotificationChannel("urgent_calls", "Llamadas Urgentes", NotificationManager.IMPORTANCE_HIGH);
-                            channel.setBypassDnd(true);
-                            channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
-                            nm.createNotificationChannel(channel);
-                        }
+                        // 5. TELECOM
+                        Bundle extras = new Bundle();
+                        extras.putString("caller", "Visitante");
+                        telecomManager.addNewIncomingCall(phoneAccountHandle, extras);
 
+                        // 6. NOTIFICATION
                         Intent intent = new Intent(activity, activity.getClass());
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                         PendingIntent pi = PendingIntent.getActivity(activity, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-                        NotificationCompat.Builder builder = new NotificationCompat.Builder(activity, "urgent_calls")
-                            .setSmallIcon(android.R.drawable.ic_menu_call)
-                            .setContentTitle("🚨 ¡ALGUIEN EN LA PUERTA!")
-                            .setContentText("Toca para contestar la llamada")
+                        NotificationCompat.Builder builder = new NotificationCompat.Builder(activity, "calls")
+                            .setSmallIcon(android.R.drawable.sym_action_call)
+                            .setContentTitle("🔔 Timbre")
                             .setPriority(NotificationCompat.PRIORITY_MAX)
-                            .setCategory(NotificationCompat.CATEGORY_ALARM)
-                            .setFullScreenIntent(pi, true)
-                            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                            .setOngoing(true);
+                            .setCategory(NotificationCompat.CATEGORY_CALL)
+                            .setFullScreenIntent(pi, true);
+                        
+                        NotificationManager nm = (NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
+                        nm.notify(1, builder.build());
 
-                        nm.notify(999, builder.build());
                         call.resolve();
-                    } catch (Exception e) { call.reject(e.getMessage()); }
+                    } catch (Exception e) {
+                        call.reject(e.getMessage());
+                    }
                 });
             }
 
             @PluginMethod
             public void endCall(PluginCall call) {
-                if (currentRingtone != null) currentRingtone.stop();
+                stopCurrentRingtone();
                 if (vibrator != null) vibrator.cancel();
+                CallConnectionService.endCall();
                 NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
-                nm.cancel(999);
+                nm.cancel(1);
                 call.resolve();
+            }
+
+            private void stopCurrentRingtone() {
+                if (currentRingtone != null && currentRingtone.isPlaying()) currentRingtone.stop();
+            }
+
+            public static void notifyCallAnswered() {
+                if (instance != null) {
+                    instance.stopCurrentRingtone();
+                    if (instance.vibrator != null) instance.vibrator.cancel();
+                    JSObject data = new JSObject();
+                    data.put("action", "answered");
+                    instance.notifyListeners("callStateChanged", data);
+                }
+            }
+
+            public static void notifyCallRejected() {
+                if (instance != null) {
+                    instance.stopCurrentRingtone();
+                    if (instance.vibrator != null) instance.vibrator.cancel();
+                    JSObject data = new JSObject();
+                    data.put("action", "rejected");
+                    instance.notifyListeners("callStateChanged", data);
+                }
             }
         }
         CALLEOF
@@ -189,9 +331,10 @@ jobs:
     - name: Configure AndroidManifest
       run: |
         MANIFEST="android/app/src/main/AndroidManifest.xml"
-        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.DISABLE_KEYGUARD" />'
+        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.READ_PHONE_STATE" /><uses-permission android:name="android.permission.CALL_PHONE" /><uses-permission android:name="android.permission.MANAGE_OWN_CALLS" /><uses-permission android:name="android.permission.BIND_TELECOM_CONNECTION_SERVICE" />'
         sed -i "s|<application|$PERMISSIONS<application|g" $MANIFEST
         sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleInstance" android:showWhenLocked="true" android:turnScreenOn="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
+        sed -i 's|</application>|<service android:name=".CallConnectionService" android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE" android:exported="true"><intent-filter><action android:name="android.telecom.ConnectionService" /></intent-filter></service></application>|' $MANIFEST
 
     - name: Create google-services.json
       run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
@@ -210,5 +353,5 @@ jobs:
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: app-debug-emergency
+        name: app-debug-fix
         path: android/app/build/outputs/apk/debug/app-debug.apk
