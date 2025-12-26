@@ -65,10 +65,73 @@ if (document.readyState === 'loading') {
     initApp();
 }
 
-async function initApp() {
+    async function initApp() {
     console.log('🚀 Iniciando carga de módulos...');
 
     let connect, PushNotifications;
+
+    async function inicializarFCM() {
+        if (!window.Capacitor) {
+            log('⚠️ FCM solo funciona en modo nativo');
+            return;
+        }
+
+        try {
+            log('🔔 Inicializando FCM...');
+            const capacitorModule = await import('@capacitor/push-notifications');
+            PushNotifications = capacitorModule.PushNotifications;
+
+            const permResult = await PushNotifications.requestPermissions();
+            if (permResult.receive === 'granted') {
+                log('✅ Permisos de notificaciones otorgados');
+                await PushNotifications.register();
+                log('📱 Registrado con FCM');
+            } else {
+                log('❌ Permisos de notificaciones denegados');
+                return;
+            }
+
+            PushNotifications.addListener('registration', async (token) => {
+                log('🔑 Token FCM recibido: ' + token.value.substring(0, 20) + '...');
+                try {
+                    await db.collection('receptores').doc(MY_ID).set({
+                        fcmToken: token.value,
+                        lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
+                        platform: 'android',
+                        appVersion: '12.0'
+                    }, { merge: true });
+                    log('✅ Token FCM guardado en Firestore');
+                } catch (e) {
+                    log('❌ Error guardando token: ' + e.message);
+                }
+            });
+
+            PushNotifications.addListener('registrationError', (error) => {
+                log('❌ Error en registro FCM: ' + JSON.stringify(error));
+            });
+
+            PushNotifications.addListener('pushNotificationReceived', (notification) => {
+                log('📬 Notificación FCM recibida (foreground): ' + JSON.stringify(notification));
+            });
+
+            PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
+                log('👆 Usuario interactuó con notificación: ' + JSON.stringify(notification));
+                const data = notification.notification.data;
+                const action = data.action;
+                const llamadaId = data.llamadaId;
+                if (action === 'answer' && llamadaId) {
+                    currentLlamadaId = llamadaId;
+                    window.contestarLlamada();
+                } else if (action === 'reject' && llamadaId) {
+                    currentLlamadaId = llamadaId;
+                    window.rechazarLlamada();
+                }
+            });
+            log('✅ FCM inicializado completamente');
+        } catch (error) {
+            log('❌ Error inicializando FCM: ' + error.message);
+        }
+    }
 
     try {
         const twilioModule = await import('twilio-video');
@@ -562,6 +625,7 @@ async function initApp() {
                 }
                 
                 await iniciarCapacitor();
+                await inicializarFCM();
             } else {
                 log('🌐 Modo Web detectado');
             }
@@ -755,6 +819,8 @@ async function initApp() {
     }
 
     window.contestarLlamada = async function() {
+        if (isProcessingCall) return;
+        isProcessingCall = true;
         log('📞 Contestando...');
         
         // Detener ringtone nativo
