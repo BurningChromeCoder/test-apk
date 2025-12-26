@@ -1,4 +1,4 @@
-name: Build APK Completo - Restore Permissions Fix
+name: Build APK Completo - Fix Vibración y Velocidad
 
 on:
   push:
@@ -33,34 +33,52 @@ jobs:
     - name: Add Android platform
       run: npx cap add android || true
 
-    - name: Create Native Plugins and Background Service
+    - name: Create All Native Plugins
       run: |
         mkdir -p android/app/src/main/java/com/mipuerta/app
         
-        # 1. MESSAGING SERVICE (Para despertar la app con notificaciones Push)
-        cat > android/app/src/main/java/com/mipuerta/app/MyMessagingService.java << 'MSGEF'
+        cat > android/app/src/main/java/com/mipuerta/app/WakeLockPlugin.java << 'WAKEOF'
         package com.mipuerta.app;
-        import android.util.Log;
-        import com.google.firebase.messaging.FirebaseMessagingService;
-        import com.google.firebase.messaging.RemoteMessage;
-
-        public class MyMessagingService extends FirebaseMessagingService {
-            @Override
-            public void onMessageReceived(RemoteMessage remoteMessage) {
-                super.onMessageReceived(remoteMessage);
-                Log.d("MiPuerta", "🔔 Señal FCM Recibida");
-                
-                if (remoteMessage.getData().containsKey("sala")) {
-                    CallPlugin.showIncomingCallNative(getApplicationContext());
-                }
+        import android.app.Activity;
+        import android.content.Context;
+        import android.os.PowerManager;
+        import android.view.WindowManager;
+        import com.getcapacitor.Plugin;
+        import com.getcapacitor.PluginCall;
+        import com.getcapacitor.PluginMethod;
+        import com.getcapacitor.annotation.CapacitorPlugin;
+        @CapacitorPlugin(name = "WakeLock")
+        public class WakeLockPlugin extends Plugin {
+            @PluginMethod
+            public void acquire(PluginCall call) {
+                Activity activity = getActivity();
+                activity.runOnUiThread(() -> {
+                    try {
+                        PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                        PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:Wake");
+                        wl.acquire(10000);
+                        activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                        call.resolve();
+                    } catch (Exception e) { call.reject(e.getMessage()); }
+                });
+            }
+            @PluginMethod
+            public void release(PluginCall call) {
+                Activity activity = getActivity();
+                activity.runOnUiThread(() -> {
+                    try {
+                        activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                        call.resolve();
+                    } catch (Exception e) { call.reject(e.getMessage()); }
+                });
             }
         }
-        MSGEF
-
-        # 2. CALL PLUGIN (Restaurado con alias de permisos para Micrófono y Audio)
+        WAKEOF
+        
         cat > android/app/src/main/java/com/mipuerta/app/CallPlugin.java << 'CALLEOF'
         package com.mipuerta.app;
         import android.Manifest;
+        import android.app.Activity;
         import android.app.NotificationChannel;
         import android.app.NotificationManager;
         import android.app.PendingIntent;
@@ -74,6 +92,7 @@ jobs:
         import android.os.PowerManager;
         import android.os.VibrationEffect;
         import android.os.Vibrator;
+        import android.view.WindowManager;
         import androidx.core.app.NotificationCompat;
         import com.getcapacitor.Plugin;
         import com.getcapacitor.PluginCall;
@@ -81,114 +100,134 @@ jobs:
         import com.getcapacitor.annotation.CapacitorPlugin;
         import com.getcapacitor.annotation.Permission;
 
-        // DEFINICIÓN DE PERMISOS PARA CAPACITOR
         @CapacitorPlugin(name = "CallPlugin", permissions = {
             @Permission(alias = "audio", strings = {Manifest.permission.RECORD_AUDIO, Manifest.permission.MODIFY_AUDIO_SETTINGS}),
+            @Permission(alias = "phone", strings = {Manifest.permission.READ_PHONE_STATE, Manifest.permission.CALL_PHONE}),
             @Permission(alias = "vibrate", strings = {Manifest.permission.VIBRATE})
         })
         public class CallPlugin extends Plugin {
-            private static Ringtone ringtone;
-            private static Vibrator vibrator;
+            private Ringtone currentRingtone;
+            private Vibrator vibrator;
 
-            public static void showIncomingCallNative(Context context) {
-                PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-                PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:CallWake");
-                if (!wl.isHeld()) wl.acquire(30000);
-
-                if (ringtone != null) ringtone.stop();
-                Uri uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
-                ringtone = RingtoneManager.getRingtone(context, uri);
-                if (ringtone != null) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        ringtone.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build());
-                    }
-                    ringtone.play();
-                }
-
-                vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
-                if (vibrator != null) {
-                    long[] pattern = {0, 1000, 500, 1000, 500};
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
+            @PluginMethod
+            public void requestBatteryOptimization(PluginCall call) {
+                Context context = getContext();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    Intent intent = new Intent();
+                    String packageName = context.getPackageName();
+                    PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                    if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                        intent.setAction(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        intent.setData(Uri.parse("package:" + packageName));
+                        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        context.startActivity(intent);
+                        call.resolve();
                     } else {
-                        vibrator.vibrate(pattern, 0);
+                        call.resolve();
                     }
+                } else {
+                    call.resolve();
                 }
+            }
 
-                NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-                String channelId = "urgent_calls";
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    NotificationChannel channel = new NotificationChannel(channelId, "Llamadas de Timbre", NotificationManager.IMPORTANCE_HIGH);
-                    channel.setBypassDnd(true);
-                    nm.createNotificationChannel(channel);
-                }
+            @PluginMethod
+            public void exitApp(PluginCall call) {
+                Activity activity = getActivity();
+                activity.runOnUiThread(() -> {
+                    activity.moveTaskToBack(true);
+                    call.resolve();
+                });
+            }
 
-                Intent intent = new Intent(context, MainActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                PendingIntent pi = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            @PluginMethod
+            public void showIncomingCall(PluginCall call) {
+                String ringtoneType = call.getString("ringtoneType", "TYPE_RINGTONE");
+                Activity activity = getActivity();
+                vibrator = (Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
 
-                NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channelId)
-                    .setSmallIcon(android.R.drawable.ic_menu_call)
-                    .setContentTitle("🚨 ¡ALGUIEN EN LA PUERTA!")
-                    .setContentText("Toca para contestar")
-                    .setPriority(NotificationCompat.PRIORITY_MAX)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setFullScreenIntent(pi, true)
-                    .setOngoing(true);
+                activity.runOnUiThread(() -> {
+                    try {
+                        // 1. ENCENDIDO INSTANTÁNEO
+                        PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                        PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:FastWake");
+                        wl.acquire(20000);
+                        activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-                nm.notify(999, builder.build());
+                        // 2. SONIDO SIN ESPERAS
+                        if (currentRingtone != null) currentRingtone.stop();
+                        int type = "TYPE_ALARM".equals(ringtoneType) ? RingtoneManager.TYPE_ALARM : RingtoneManager.TYPE_RINGTONE;
+                        Uri uri = RingtoneManager.getDefaultUri(type);
+                        currentRingtone = RingtoneManager.getRingtone(activity, uri);
+                        if (currentRingtone != null) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                                currentRingtone.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build());
+                            }
+                            currentRingtone.play();
+                        }
+
+                        // 3. VIBRACIÓN INTEGRADA (Para evitar error JS)
+                        if (vibrator != null) {
+                            long[] pattern = {0, 800, 200, 800, 200, 800};
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
+                            } else {
+                                vibrator.vibrate(pattern, 0);
+                            }
+                        }
+
+                        // 4. NOTIFICACIÓN
+                        NotificationManager nm = (NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            NotificationChannel channel = new NotificationChannel("urgent_calls", "Llamadas Urgentes", NotificationManager.IMPORTANCE_HIGH);
+                            channel.setBypassDnd(true);
+                            channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
+                            nm.createNotificationChannel(channel);
+                        }
+
+                        Intent intent = new Intent(activity, activity.getClass());
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                        PendingIntent pi = PendingIntent.getActivity(activity, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+                        NotificationCompat.Builder builder = new NotificationCompat.Builder(activity, "urgent_calls")
+                            .setSmallIcon(android.R.drawable.ic_menu_call)
+                            .setContentTitle("🚨 ¡ALGUIEN EN LA PUERTA!")
+                            .setContentText("Toca para contestar")
+                            .setPriority(NotificationCompat.PRIORITY_MAX)
+                            .setCategory(NotificationCompat.CATEGORY_CALL)
+                            .setFullScreenIntent(pi, true)
+                            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                            .setOngoing(true);
+
+                        nm.notify(999, builder.build());
+                        call.resolve();
+                    } catch (Exception e) { call.reject(e.getMessage()); }
+                });
             }
 
             @PluginMethod
             public void endCall(PluginCall call) {
-                if (ringtone != null) ringtone.stop();
+                if (currentRingtone != null) currentRingtone.stop();
                 if (vibrator != null) vibrator.cancel();
                 NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
                 nm.cancel(999);
                 call.resolve();
             }
-
+            
             @PluginMethod
-            public void requestBatteryOptimization(PluginCall call) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    Intent intent = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                    intent.setData(Uri.parse("package:" + getContext().getPackageName()));
-                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    getContext().startActivity(intent);
+            public void vibrate(PluginCall call) {
+                vibrator = (Vibrator) getContext().getSystemService(Context.VIBRATOR_SERVICE);
+                if (vibrator != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        vibrator.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE));
+                    } else {
+                        vibrator.vibrate(200);
+                    }
                 }
                 call.resolve();
             }
         }
         CALLEOF
-
-        # 3. WAKE LOCK PLUGIN
-        cat > android/app/src/main/java/com/mipuerta/app/WakeLockPlugin.java << 'WAKEOF'
-        package com.mipuerta.app;
-        import android.view.WindowManager;
-        import com.getcapacitor.Plugin;
-        import com.getcapacitor.PluginCall;
-        import com.getcapacitor.PluginMethod;
-        import com.getcapacitor.annotation.CapacitorPlugin;
-        @CapacitorPlugin(name = "WakeLock")
-        public class WakeLockPlugin extends Plugin {
-            @PluginMethod
-            public void acquire(PluginCall call) {
-                getActivity().runOnUiThread(() -> {
-                    getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
-                    call.resolve();
-                });
-            }
-            @PluginMethod
-            public void release(PluginCall call) {
-                getActivity().runOnUiThread(() -> {
-                    getActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
-                    call.resolve();
-                });
-            }
-        }
-        WAKEOF
-
-        # 4. MAIN ACTIVITY
+        
         cat > android/app/src/main/java/com/mipuerta/app/MainActivity.java << 'MAINEOF'
         package com.mipuerta.app;
         import android.os.Bundle;
@@ -203,23 +242,11 @@ jobs:
         }
         MAINEOF
 
-    - name: Inject Dependencies and Configure Manifest (Full Permissions Fix)
+    - name: Configure AndroidManifest
       run: |
         MANIFEST="android/app/src/main/AndroidManifest.xml"
-        GRADLE_APP="android/app/build.gradle"
-        
-        # 1. Inyectar dependencia de Firebase Messaging
-        sed -i "/dependencies {/a \    implementation 'com.google.firebase:firebase-messaging:23.4.1'" $GRADLE_APP
-        
-        # 2. Registrar el Service en el Manifest
-        SERVICE_TAG='<service android:name=".MyMessagingService" android:exported="false"><intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter></service>'
-        sed -i "s|</activity>|</activity>$SERVICE_TAG|g" $MANIFEST
-        
-        # 3. INYECTAR TODOS LOS PERMISOS DESAPARECIDOS
-        PERMISSIONS='<uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.DISABLE_KEYGUARD" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />'
+        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.DISABLE_KEYGUARD" /><uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" /><uses-permission android:name="android.permission.READ_PHONE_STATE" /><uses-permission android:name="android.permission.CALL_PHONE" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />'
         sed -i "s|<application|$PERMISSIONS<application|g" $MANIFEST
-        
-        # 4. Configurar Activity para mostrarse sobre bloqueo
         sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleInstance" android:showWhenLocked="true" android:turnScreenOn="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
 
     - name: Create google-services.json
@@ -239,5 +266,5 @@ jobs:
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: app-debug-permissions-restored
+        name: app-debug-fast-fix
         path: android/app/build/outputs/apk/debug/app-debug.apk
