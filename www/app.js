@@ -30,7 +30,7 @@ async function initFirebaseImmediate() {
             console.log('✅ Firebase global detectado');
             if (!firebase.apps.length) {
                 const config = {
-                    apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
+                    apiKey: "AIzaSyBxOnEz1YAtlAYsQVHmLJJZ0L37H2FoeRE",
                     authDomain: "puerta-c3a71.firebaseapp.com",
                     projectId: "puerta-c3a71",
                     storageBucket: "puerta-c3a71.firebasestorage.app",
