@@ -432,10 +432,6 @@ jobs:
     
     - name: Grant execute permission
       run: chmod +x android/gradlew
-      
-    - name: Ensure Build Tools 34.0.0 are installed
-      run: |
-        sdkmanager "build-tools;34.0.0"
         
     - name: Build Release APK
       run: |
