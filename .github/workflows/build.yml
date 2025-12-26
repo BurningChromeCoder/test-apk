@@ -432,7 +432,11 @@ jobs:
     
     - name: Grant execute permission
       run: chmod +x android/gradlew
-    
+    - name: Get SHA-1 Key
+      run: |
+        cd android
+        ./gradlew signingReport
+        
     - name: Build APK
       run: |
         cd android
