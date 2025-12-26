@@ -418,6 +418,12 @@ jobs:
         sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleInstance" android:showWhenLocked="true" android:turnScreenOn="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
         sed -i 's|</application>|<service android:name=".MyFirebaseMessagingService" android:exported="false"><intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter></service><receiver android:name=".CallActionReceiver" android:exported="false" /></application>|' $MANIFEST
 
+    - name: Inject Firebase Dependencies into build.gradle
+      run: |
+        GRADLE="android/app/build.gradle"
+        sed -i "/dependencies {/a \    implementation 'com.google.firebase:firebase-messaging:23.4.0'" $GRADLE
+        sed -i "/dependencies {/a \    implementation platform('com.google.firebase:firebase-bom:32.7.0')" $GRADLE
+
     - name: Create google-services.json
       run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
 
