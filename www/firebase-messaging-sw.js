@@ -3,7 +3,7 @@ importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-comp
 
 // TU CONFIGURACIÓN EXACTA
 firebase.initializeApp({
-  apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
+  apiKey: "AIzaSyBxOnEz1YAtlAYsQVHmLJJZ0L37H2FoeRE",
   authDomain: "puerta-c3a71.firebaseapp.com",
   projectId: "puerta-c3a71",
   storageBucket: "puerta-c3a71.firebasestorage.app",
