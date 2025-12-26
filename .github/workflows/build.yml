@@ -1,4 +1,4 @@
-name: Build APK Completo - Fix Despertador Nativo
+name: Build APK Completo - Restore Permissions Fix
 
 on:
   push:
@@ -37,7 +37,7 @@ jobs:
       run: |
         mkdir -p android/app/src/main/java/com/mipuerta/app
         
-        # 1. MESSAGING SERVICE: El encargado de escuchar a Firebase con la app cerrada
+        # 1. MESSAGING SERVICE (Para despertar la app con notificaciones Push)
         cat > android/app/src/main/java/com/mipuerta/app/MyMessagingService.java << 'MSGEF'
         package com.mipuerta.app;
         import android.util.Log;
@@ -48,9 +48,8 @@ jobs:
             @Override
             public void onMessageReceived(RemoteMessage remoteMessage) {
                 super.onMessageReceived(remoteMessage);
-                Log.d("MiPuerta", "🔔 Señal recibida de Firebase");
+                Log.d("MiPuerta", "🔔 Señal FCM Recibida");
                 
-                // Si el mensaje es de una llamada entrante, disparamos el aviso nativo
                 if (remoteMessage.getData().containsKey("sala")) {
                     CallPlugin.showIncomingCallNative(getApplicationContext());
                 }
@@ -58,7 +57,7 @@ jobs:
         }
         MSGEF
 
-        # 2. CALL PLUGIN: Centraliza la lógica de sonido, vibración y avisos
+        # 2. CALL PLUGIN (Restaurado con alias de permisos para Micrófono y Audio)
         cat > android/app/src/main/java/com/mipuerta/app/CallPlugin.java << 'CALLEOF'
         package com.mipuerta.app;
         import android.Manifest;
@@ -82,21 +81,20 @@ jobs:
         import com.getcapacitor.annotation.CapacitorPlugin;
         import com.getcapacitor.annotation.Permission;
 
+        // DEFINICIÓN DE PERMISOS PARA CAPACITOR
         @CapacitorPlugin(name = "CallPlugin", permissions = {
+            @Permission(alias = "audio", strings = {Manifest.permission.RECORD_AUDIO, Manifest.permission.MODIFY_AUDIO_SETTINGS}),
             @Permission(alias = "vibrate", strings = {Manifest.permission.VIBRATE})
         })
         public class CallPlugin extends Plugin {
             private static Ringtone ringtone;
             private static Vibrator vibrator;
 
-            // MÉTODO MAESTRO: Se llama desde el Service o desde JS
             public static void showIncomingCallNative(Context context) {
-                // Forzar encendido de pantalla
                 PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-                PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:Wake");
+                PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:CallWake");
                 if (!wl.isHeld()) wl.acquire(30000);
 
-                // Sonido del sistema
                 if (ringtone != null) ringtone.stop();
                 Uri uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
                 ringtone = RingtoneManager.getRingtone(context, uri);
@@ -107,7 +105,6 @@ jobs:
                     ringtone.play();
                 }
 
-                // Vibración rítmica
                 vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
                 if (vibrator != null) {
                     long[] pattern = {0, 1000, 500, 1000, 500};
@@ -118,11 +115,10 @@ jobs:
                     }
                 }
 
-                // Notificación de pantalla completa (Interrumpe cualquier estado)
                 NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
                 String channelId = "urgent_calls";
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    NotificationChannel channel = new NotificationChannel(channelId, "Llamadas Urgentes", NotificationManager.IMPORTANCE_HIGH);
+                    NotificationChannel channel = new NotificationChannel(channelId, "Llamadas de Timbre", NotificationManager.IMPORTANCE_HIGH);
                     channel.setBypassDnd(true);
                     nm.createNotificationChannel(channel);
                 }
@@ -144,12 +140,6 @@ jobs:
             }
 
             @PluginMethod
-            public void showIncomingCall(PluginCall call) {
-                showIncomingCallNative(getContext());
-                call.resolve();
-            }
-
-            @PluginMethod
             public void endCall(PluginCall call) {
                 if (ringtone != null) ringtone.stop();
                 if (vibrator != null) vibrator.cancel();
@@ -168,16 +158,10 @@ jobs:
                 }
                 call.resolve();
             }
-
-            @PluginMethod
-            public void exitApp(PluginCall call) {
-                getActivity().moveTaskToBack(true);
-                call.resolve();
-            }
         }
         CALLEOF
 
-        # 3. WAKE LOCK: Mantiene la pantalla activa durante la llamada
+        # 3. WAKE LOCK PLUGIN
         cat > android/app/src/main/java/com/mipuerta/app/WakeLockPlugin.java << 'WAKEOF'
         package com.mipuerta.app;
         import android.view.WindowManager;
@@ -204,7 +188,7 @@ jobs:
         }
         WAKEOF
 
-        # 4. MAIN ACTIVITY: Registro de plugins
+        # 4. MAIN ACTIVITY
         cat > android/app/src/main/java/com/mipuerta/app/MainActivity.java << 'MAINEOF'
         package com.mipuerta.app;
         import android.os.Bundle;
@@ -219,23 +203,23 @@ jobs:
         }
         MAINEOF
 
-    - name: Inject Dependencies and Configure Manifest
+    - name: Inject Dependencies and Configure Manifest (Full Permissions Fix)
       run: |
         MANIFEST="android/app/src/main/AndroidManifest.xml"
         GRADLE_APP="android/app/build.gradle"
         
-        # Inyectar dependencia necesaria para Firebase Messaging
+        # 1. Inyectar dependencia de Firebase Messaging
         sed -i "/dependencies {/a \    implementation 'com.google.firebase:firebase-messaging:23.4.1'" $GRADLE_APP
         
-        # Registrar el Service en el Manifest
+        # 2. Registrar el Service en el Manifest
         SERVICE_TAG='<service android:name=".MyMessagingService" android:exported="false"><intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter></service>'
         sed -i "s|</activity>|</activity>$SERVICE_TAG|g" $MANIFEST
         
-        # Inyectar Permisos y configuraciones de pantalla
-        PERMISSIONS='<uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.DISABLE_KEYGUARD" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />'
+        # 3. INYECTAR TODOS LOS PERMISOS DESAPARECIDOS
+        PERMISSIONS='<uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.DISABLE_KEYGUARD" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />'
         sed -i "s|<application|$PERMISSIONS<application|g" $MANIFEST
         
-        # Asegurar que la actividad principal pueda "traspasar" el bloqueo de pantalla
+        # 4. Configurar Activity para mostrarse sobre bloqueo
         sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleInstance" android:showWhenLocked="true" android:turnScreenOn="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
 
     - name: Create google-services.json
@@ -255,5 +239,5 @@ jobs:
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: app-debug-final-optimized
+        name: app-debug-permissions-restored
         path: android/app/build/outputs/apk/debug/app-debug.apk
