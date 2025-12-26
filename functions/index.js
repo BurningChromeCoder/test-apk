@@ -6,12 +6,13 @@ const Twilio = require('twilio');
 
 admin.initializeApp();
 
-// Configurar región por defecto (opcional, ajusta según tu preferencia)
-setGlobalOptions({ region: 'us-central1' });
+// Configuración global para v2
+setGlobalOptions({ 
+    region: 'us-central1',
+    maxInstances: 10 
+});
 
-// Configuración de Twilio
-// Nota: En v2 se recomienda usar secretos o variables de entorno de GCP
-// Para mantener compatibilidad rápida, intentamos obtener de config() o variables de entorno
+// Configuración de Twilio (Usa variables de entorno o valores por defecto)
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_SID || 'AC...';
 const TWILIO_API_KEY = process.env.TWILIO_KEY || 'SK...';
 const TWILIO_API_SECRET = process.env.TWILIO_SECRET || '...';
@@ -31,12 +32,8 @@ const handleCors = (req, res) => {
 // 1. OBTENER TOKEN DE VIDEO
 exports.obtenerTokenTwilio = onRequest(async (req, res) => {
     if (handleCors(req, res)) return;
-
     const { identidad, sala } = req.body; 
-    if (!identidad || !sala) {
-        return res.status(400).json({ error: 'Faltan parámetros' });
-    }
-
+    if (!identidad || !sala) return res.status(400).json({ error: 'Faltan parámetros' });
     try {
         const AccessToken = Twilio.jwt.AccessToken;
         const VideoGrant = AccessToken.VideoGrant;
@@ -51,24 +48,19 @@ exports.obtenerTokenTwilio = onRequest(async (req, res) => {
 // 2. NOTIFICAR LLAMADA
 exports.notificarLlamada = onRequest(async (req, res) => {
     if (handleCors(req, res)) return;
-    
     const { sala } = req.body;
     if (!sala) return res.status(400).json({ error: 'Falta sala' });
-    
     try {
         const llamadaRef = admin.firestore().collection('llamadas').doc();
         const llamadaId = llamadaRef.id;
-
         await llamadaRef.set({
             sala: sala,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             estado: 'llamando',
             sistema: 'v6-twilio'
         });
-
         const receptorDoc = await admin.firestore().collection('receptores').doc('puerta-admin-v2').get();
         let fcmToken = receptorDoc.exists ? (receptorDoc.data().fcmToken || receptorDoc.data().token) : null;
-
         const mensaje = {
             data: {
                 type: 'incoming_call',
@@ -79,13 +71,7 @@ exports.notificarLlamada = onRequest(async (req, res) => {
             },
             android: { priority: 'high', ttl: 30000 }
         };
-
-        if (fcmToken) {
-            mensaje.token = fcmToken;
-        } else {
-            mensaje.topic = sala;
-        }
-
+        if (fcmToken) { mensaje.token = fcmToken; } else { mensaje.topic = sala; }
         await admin.messaging().send(mensaje);
         return res.status(200).json({ success: true, llamadaId: llamadaId });
     } catch (error) {
@@ -98,7 +84,6 @@ exports.registrarReceptor = onRequest(async (req, res) => {
     if (handleCors(req, res)) return;
     const { token, sala } = req.body;
     if (!token || !sala) return res.status(400).json({ error: 'Faltan datos' });
-    
     try {
         await admin.messaging().subscribeToTopic(token, sala);
         await admin.firestore().collection('receptores').doc('puerta-admin-v2').set({
@@ -140,7 +125,6 @@ exports.buscarLlamadaActiva = onRequest(async (req, res) => {
             .where('sala', '==', sala)
             .where('estado', '==', 'llamando')
             .orderBy('timestamp', 'desc').limit(1).get();
-
         if (snapshot.empty) return res.status(200).json({ activa: false });
         const doc = snapshot.docs[0];
         const data = doc.data();
@@ -152,15 +136,17 @@ exports.buscarLlamadaActiva = onRequest(async (req, res) => {
     }
 });
 
-// 6. TRIGGER AUTOMÁTICO (Sintaxis v2)
-exports.onLlamadaCreada = onDocumentCreated("llamadas/{llamadaId}", async (event) => {
+// 6. TRIGGER AUTOMÁTICO (Firestore v2)
+// Nota: Si falla por permisos de Eventarc, espera 5 minutos y reintenta.
+exports.onLlamadaCreada = onDocumentCreated({
+    document: "llamadas/{llamadaId}",
+    retry: true
+}, async (event) => {
     const data = event.data.data();
     if (!data || data.estado !== 'llamando') return;
-
     try {
         const receptorDoc = await admin.firestore().collection('receptores').doc('puerta-admin-v2').get();
         if (!receptorDoc.exists || !receptorDoc.data().fcmToken) return;
-
         await admin.messaging().send({
             token: receptorDoc.data().fcmToken,
             data: {
