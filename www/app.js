@@ -94,6 +94,7 @@ if (document.readyState === 'loading') {
             PushNotifications.addListener('registration', async (token) => {
                 log('🔑 Token FCM recibido: ' + token.value.substring(0, 20) + '...');
                 try {
+                    // 1. Guardar en Firestore
                     await db.collection('receptores').doc(MY_ID).set({
                         fcmToken: token.value,
                         lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
@@ -101,13 +102,29 @@ if (document.readyState === 'loading') {
                         appVersion: '12.0'
                     }, { merge: true });
                     log('✅ Token FCM guardado en Firestore');
+
+                    // 2. Registrar en el servidor de notificaciones (Cloud Function)
+                    const response = await fetch(API_URL_REGISTRO, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: token.value, sala: 'puerta-admin-v2' })
+                    });
+                    if (response.ok) {
+                        log('✅ Registro en servidor exitoso');
+                    } else {
+                        log('⚠️ Error servidor registro: ' + response.status);
+                    }
                 } catch (e) {
-                    log('❌ Error guardando token: ' + e.message);
+                    log('❌ Error en registro: ' + e.message);
                 }
             });
 
             PushNotifications.addListener('registrationError', (error) => {
-                log('❌ Error en registro FCM: ' + JSON.stringify(error));
+                const errorStr = JSON.stringify(error);
+                log('❌ Error Crítico FCM: ' + errorStr);
+                if (errorStr.includes('FIS_AUTH_ERROR')) {
+                    log('💡 ERROR DE AUTENTICACIÓN: Revisa la API Key en Firebase Console y habilita "Firebase Installations API"');
+                }
             });
 
             PushNotifications.addListener('pushNotificationReceived', (notification) => {
