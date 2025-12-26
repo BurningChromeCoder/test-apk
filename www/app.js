@@ -944,15 +944,17 @@ async function initApp() {
                 await releaseWakeLock();
                 await CallPlugin.endCall();
                 log('📞 Llamada nativa terminada');
-                // Si la pantalla estaba bloqueada, salir de la app
-                if (document.visibilityState !== 'visible') {
-                    setTimeout(async () => {
-                        try {
-                            await CallPlugin.exitApp();
-                            log('🚪 App enviada al fondo');
-                        } catch (e) {}
-                    }, 500);
-                }
+                
+                // Siempre intentar enviar al fondo tras finalizar para asegurar que la pantalla se apague
+                // Esperamos 3 segundos para que el usuario vea el estado final
+                setTimeout(async () => {
+                    try {
+                        await CallPlugin.exitApp();
+                        log('🚪 App enviada al fondo (Auto)');
+                    } catch (e) {
+                        log('⚠️ Error al salir auto: ' + e.message);
+                    }
+                }, 3000);
             } catch (e) {
                 log('⚠️ Error terminando llamada nativa: ' + e.message);
             }
