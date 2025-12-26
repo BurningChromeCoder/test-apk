@@ -63,7 +63,15 @@ jobs:
                 });
             }
             @PluginMethod
-            public void release(PluginCall call) { call.resolve(); }
+            public void release(PluginCall call) {
+                Activity activity = getActivity();
+                activity.runOnUiThread(() -> {
+                    try {
+                        activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                        call.resolve();
+                    } catch (Exception e) { call.reject(e.getMessage()); }
+                });
+            }
         }
         WAKEOF
         
@@ -100,6 +108,36 @@ jobs:
         public class CallPlugin extends Plugin {
             private Ringtone currentRingtone;
             private Vibrator vibrator;
+
+            @PluginMethod
+            public void requestBatteryOptimization(PluginCall call) {
+                Context context = getContext();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    Intent intent = new Intent();
+                    String packageName = context.getPackageName();
+                    PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                    if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                        intent.setAction(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        intent.setData(Uri.parse("package:" + packageName));
+                        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        context.startActivity(intent);
+                        call.resolve();
+                    } else {
+                        call.resolve();
+                    }
+                } else {
+                    call.resolve();
+                }
+            }
+
+            @PluginMethod
+            public void exitApp(PluginCall call) {
+                Activity activity = getActivity();
+                activity.runOnUiThread(() -> {
+                    activity.moveTaskToBack(true);
+                    call.resolve();
+                });
+            }
 
             @PluginMethod
             public void showIncomingCall(PluginCall call) {
@@ -207,7 +245,7 @@ jobs:
     - name: Configure AndroidManifest
       run: |
         MANIFEST="android/app/src/main/AndroidManifest.xml"
-        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.DISABLE_KEYGUARD" /><uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" /><uses-permission android:name="android.permission.READ_PHONE_STATE" /><uses-permission android:name="android.permission.CALL_PHONE" />'
+        PERMISSIONS='<uses-permission android:name="android.permission.INTERNET" /><uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.DISABLE_KEYGUARD" /><uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" /><uses-permission android:name="android.permission.READ_PHONE_STATE" /><uses-permission android:name="android.permission.CALL_PHONE" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />'
         sed -i "s|<application|$PERMISSIONS<application|g" $MANIFEST
         sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleInstance" android:showWhenLocked="true" android:turnScreenOn="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
 
