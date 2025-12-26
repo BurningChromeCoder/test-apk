@@ -175,7 +175,7 @@ if (document.readyState === 'loading') {
     const MY_ID = "puerta-admin-v2"; 
     const ROOM_NAME = 'sala-principal'; 
     const API_URL_REGISTRO = 'https://registrarreceptor-6rmawrifca-uc.a.run.app';
-    const API_URL_TOKEN = 'https://us-central1-puerta-c3a71.cloudfunctions.net/obtenerTokenTwilio';
+    const API_URL_TOKEN = 'https://obtenertokentwilio-6rmawrifca-uc.a.run.app';
     const MAX_REINTENTOS = 5;
     const REINTENTO_DELAY = 1000;
     const ICE_TIMEOUT = 10000;
