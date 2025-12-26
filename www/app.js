@@ -29,14 +29,16 @@ async function initFirebaseImmediate() {
         if (typeof firebase !== 'undefined') {
             console.log('✅ Firebase global detectado');
             if (!firebase.apps.length) {
-                firebase.initializeApp({
+                const config = {
                     apiKey: "AIzaSyDMxrgcvTwO54m6NZjIGLTIGjKLYYYqF0E",
                     authDomain: "puerta-c3a71.firebaseapp.com",
                     projectId: "puerta-c3a71",
                     storageBucket: "puerta-c3a71.firebasestorage.app",
                     messagingSenderId: "830550601352",
                     appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
-                });
+                };
+                console.log('Firebase Config:', config.projectId);
+                firebase.initializeApp(config);
             }
             db = firebase.firestore();
             firebaseReady = true;
