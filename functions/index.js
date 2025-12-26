@@ -12,7 +12,7 @@ setGlobalOptions({
     maxInstances: 10 
 });
 
-// Configuración de Twilio (Usa variables de entorno o valores por defecto)
+// Configuración de Twilio
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_SID || 'AC...';
 const TWILIO_API_KEY = process.env.TWILIO_KEY || 'SK...';
 const TWILIO_API_SECRET = process.env.TWILIO_SECRET || '...';
@@ -137,11 +137,7 @@ exports.buscarLlamadaActiva = onRequest(async (req, res) => {
 });
 
 // 6. TRIGGER AUTOMÁTICO (Firestore v2)
-// Nota: Si falla por permisos de Eventarc, espera 5 minutos y reintenta.
-exports.onLlamadaCreada = onDocumentCreated({
-    document: "llamadas/{llamadaId}",
-    retry: true
-}, async (event) => {
+exports.onLlamadaCreada = onDocumentCreated("llamadas/{llamadaId}", async (event) => {
     const data = event.data.data();
     if (!data || data.estado !== 'llamando') return;
     try {
