@@ -1,4 +1,4 @@
-name: Build APK Completo - Full Background Fix
+name: Build APK Completo - Fix Despertador Nativo
 
 on:
   push:
@@ -33,11 +33,11 @@ jobs:
     - name: Add Android platform
       run: npx cap add android || true
 
-    - name: Create All Native Plugins y Messaging Service
+    - name: Create Native Plugins and Background Service
       run: |
         mkdir -p android/app/src/main/java/com/mipuerta/app
         
-        # 1. MESSAGING SERVICE (Detecta el mensaje push con la app cerrada)
+        # 1. MESSAGING SERVICE: El encargado de escuchar a Firebase con la app cerrada
         cat > android/app/src/main/java/com/mipuerta/app/MyMessagingService.java << 'MSGEF'
         package com.mipuerta.app;
         import android.util.Log;
@@ -48,9 +48,9 @@ jobs:
             @Override
             public void onMessageReceived(RemoteMessage remoteMessage) {
                 super.onMessageReceived(remoteMessage);
-                Log.d("MiPuerta", "🔔 Mensaje de Firebase recibido en segundo plano");
+                Log.d("MiPuerta", "🔔 Señal recibida de Firebase");
                 
-                // Si el mensaje trae datos de la sala, disparamos la alerta nativa
+                // Si el mensaje es de una llamada entrante, disparamos el aviso nativo
                 if (remoteMessage.getData().containsKey("sala")) {
                     CallPlugin.showIncomingCallNative(getApplicationContext());
                 }
@@ -58,7 +58,7 @@ jobs:
         }
         MSGEF
 
-        # 2. CALL PLUGIN (Vibración, Sonido, Notificaciones y Batería)
+        # 2. CALL PLUGIN: Centraliza la lógica de sonido, vibración y avisos
         cat > android/app/src/main/java/com/mipuerta/app/CallPlugin.java << 'CALLEOF'
         package com.mipuerta.app;
         import android.Manifest;
@@ -89,14 +89,14 @@ jobs:
             private static Ringtone ringtone;
             private static Vibrator vibrator;
 
-            // MÉTODO ESTÁTICO: Puede ser llamado por el Service sin que la app esté abierta
+            // MÉTODO MAESTRO: Se llama desde el Service o desde JS
             public static void showIncomingCallNative(Context context) {
-                // Despertar CPU y Pantalla
+                // Forzar encendido de pantalla
                 PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-                PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:IncomingWake");
-                wl.acquire(30000);
+                PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "MiPuerta:Wake");
+                if (!wl.isHeld()) wl.acquire(30000);
 
-                // Iniciar Ringtone
+                // Sonido del sistema
                 if (ringtone != null) ringtone.stop();
                 Uri uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
                 ringtone = RingtoneManager.getRingtone(context, uri);
@@ -107,7 +107,7 @@ jobs:
                     ringtone.play();
                 }
 
-                // Iniciar Vibración infinita
+                // Vibración rítmica
                 vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
                 if (vibrator != null) {
                     long[] pattern = {0, 1000, 500, 1000, 500};
@@ -118,29 +118,26 @@ jobs:
                     }
                 }
 
-                // Crear Canal de Notificación de alta prioridad
+                // Notificación de pantalla completa (Interrumpe cualquier estado)
                 NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-                String cid = "urgent_calls";
+                String channelId = "urgent_calls";
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    NotificationChannel channel = new NotificationChannel(cid, "Llamadas Urgentes", NotificationManager.IMPORTANCE_HIGH);
+                    NotificationChannel channel = new NotificationChannel(channelId, "Llamadas Urgentes", NotificationManager.IMPORTANCE_HIGH);
                     channel.setBypassDnd(true);
-                    channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
                     nm.createNotificationChannel(channel);
                 }
 
-                // Intent para abrir la app al tocar la notificación
                 Intent intent = new Intent(context, MainActivity.class);
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                 PendingIntent pi = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
-                NotificationCompat.Builder builder = new NotificationCompat.Builder(context, cid)
+                NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channelId)
                     .setSmallIcon(android.R.drawable.ic_menu_call)
                     .setContentTitle("🚨 ¡ALGUIEN EN LA PUERTA!")
                     .setContentText("Toca para contestar")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setFullScreenIntent(pi, true) // Esto abre la app sobre el bloqueo
-                    .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                    .setFullScreenIntent(pi, true)
                     .setOngoing(true);
 
                 nm.notify(999, builder.build());
@@ -162,29 +159,12 @@ jobs:
             }
 
             @PluginMethod
-            public void vibrate(PluginCall call) {
-                Vibrator v = (Vibrator) getContext().getSystemService(Context.VIBRATOR_SERVICE);
-                if (v != null) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        v.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE));
-                    } else {
-                        v.vibrate(200);
-                    }
-                }
-                call.resolve();
-            }
-
-            @PluginMethod
             public void requestBatteryOptimization(PluginCall call) {
-                Context context = getContext();
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-                    if (!pm.isIgnoringBatteryOptimizations(context.getPackageName())) {
-                        Intent intent = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                        intent.setData(Uri.parse("package:" + context.getPackageName()));
-                        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        context.startActivity(intent);
-                    }
+                    Intent intent = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + getContext().getPackageName()));
+                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    getContext().startActivity(intent);
                 }
                 call.resolve();
             }
@@ -197,6 +177,7 @@ jobs:
         }
         CALLEOF
 
+        # 3. WAKE LOCK: Mantiene la pantalla activa durante la llamada
         cat > android/app/src/main/java/com/mipuerta/app/WakeLockPlugin.java << 'WAKEOF'
         package com.mipuerta.app;
         import android.view.WindowManager;
@@ -223,6 +204,7 @@ jobs:
         }
         WAKEOF
 
+        # 4. MAIN ACTIVITY: Registro de plugins
         cat > android/app/src/main/java/com/mipuerta/app/MainActivity.java << 'MAINEOF'
         package com.mipuerta.app;
         import android.os.Bundle;
@@ -237,19 +219,23 @@ jobs:
         }
         MAINEOF
 
-    - name: Configure AndroidManifest
+    - name: Inject Dependencies and Configure Manifest
       run: |
         MANIFEST="android/app/src/main/AndroidManifest.xml"
+        GRADLE_APP="android/app/build.gradle"
         
-        # Registrar el Service para que Android sepa que existe
+        # Inyectar dependencia necesaria para Firebase Messaging
+        sed -i "/dependencies {/a \    implementation 'com.google.firebase:firebase-messaging:23.4.1'" $GRADLE_APP
+        
+        # Registrar el Service en el Manifest
         SERVICE_TAG='<service android:name=".MyMessagingService" android:exported="false"><intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter></service>'
         sed -i "s|</activity>|</activity>$SERVICE_TAG|g" $MANIFEST
         
-        # Inyectar todos los permisos necesarios
-        PERMISSIONS='<uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.DISABLE_KEYGUARD" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" /><uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />'
+        # Inyectar Permisos y configuraciones de pantalla
+        PERMISSIONS='<uses-permission android:name="android.permission.WAKE_LOCK" /><uses-permission android:name="android.permission.VIBRATE" /><uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" /><uses-permission android:name="android.permission.DISABLE_KEYGUARD" /><uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />'
         sed -i "s|<application|$PERMISSIONS<application|g" $MANIFEST
         
-        # Configurar la actividad principal para que sea visible en el lockscreen
+        # Asegurar que la actividad principal pueda "traspasar" el bloqueo de pantalla
         sed -i 's|<activity.*|<activity android:name=".MainActivity" android:configChanges="orientation\|keyboardHidden\|keyboard\|screenSize\|locale\|smallestScreenSize\|screenLayout\|uiMode" android:label="@string/title_activity_main" android:launchMode="singleInstance" android:showWhenLocked="true" android:turnScreenOn="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:exported="true">|' $MANIFEST
 
     - name: Create google-services.json
@@ -269,5 +255,5 @@ jobs:
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: app-debug-full-fix
+        name: app-debug-final-optimized
         path: android/app/build/outputs/apk/debug/app-debug.apk
