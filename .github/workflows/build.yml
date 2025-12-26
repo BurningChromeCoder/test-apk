@@ -1,4 +1,4 @@
-name: Build APK con FCM - Notificaciones en Background
+name: Build APK con FCM - Notificaciones en Background y Firma
 
 on:
   push:
@@ -432,23 +432,24 @@ jobs:
     
     - name: Grant execute permission
       run: chmod +x android/gradlew
-    - name: Generate Default Debug Keystore
-      run: |
-        mkdir -p /home/runner/.config/.android
-        keytool -genkey -v -keystore /home/runner/.config/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
-    - name: Get SHA-1 Key
+    - name: Build Release APK
       run: |
         cd android
-        ./gradlew signingReport
+        ./gradlew assembleRelease --no-daemon
 
-    - name: Build APK
-      run: |
-        cd android
-        ./gradlew assembleDebug --no-daemon
-    
-    - name: Upload APK
+    - name: Sign Android Release
+      uses: r0adkll/sign-android-release@v1
+      id: sign_app
+      with:
+        releaseDirectory: android/app/build/outputs/apk/release
+        signingKeyBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+        keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    - name: Upload Signed APK
       uses: actions/upload-artifact@v4
       with:
-        name: app-debug-fcm-background
-        path: android/app/build/outputs/apk/debug/app-debug.apk
+        name: MiPuerta-Release-Signed
+        path: ${{ steps.sign_app.outputs.signedReleaseFile }}
