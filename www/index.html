@@ -114,6 +114,23 @@
             font-size: 16px; 
         }        
         #network-badge { position: absolute; top: 220px; right: 15px; z-index: 10; padding: 5px 12px; border-radius: 15px; background: rgba(0,0,0,0.6); font-size: 11px; display: flex; align-items: center; gap: 6px; }
+        #battery-opt-wrapper {
+            position: absolute;
+            top: 260px;
+            right: 10px;
+            z-index: 50;
+            background: rgba(231, 76, 60, 0.8);
+            padding: 8px 12px;
+            border-radius: 15px;
+            border: 1px solid #c0392b;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            cursor: pointer;
+            animation: pulse-battery 2s infinite;
+        }
+        @keyframes pulse-battery { 0% { opacity: 0.8; } 50% { opacity: 1; transform: scale(1.05); } 100% { opacity: 0.8; } }
         .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
         .dot.online { background: #2ecc71; box-shadow: 0 0 5px #2ecc71; animation: pulse-dot 2s infinite; }
         .dot.offline { background: #e74c3c; }
@@ -174,6 +191,9 @@
         </label>
     </div>    
     <div id="network-badge"><div id="net-dot" class="dot offline"></div><span id="net-text">Desconectado</span></div>
+    <div id="battery-opt-wrapper" onclick="window.solicitarOptimizaciónBateria()">
+        <span>🔋 Optimización: OFF</span>
+    </div>
 
     <div id="main-wrapper">
         <canvas id="wave-visualizer"></canvas>

@@ -896,8 +896,18 @@ async function initApp() {
         stopRinging();
         if (window.Capacitor) {
             try {
+                await releaseWakeLock();
                 await CallPlugin.endCall();
                 log('📞 Llamada nativa terminada');
+                // Salir de la app para que no quede en el lockscreen
+                setTimeout(async () => {
+                    try {
+                        await CallPlugin.exitApp();
+                        log('🚪 App enviada al fondo');
+                    } catch (e) {
+                        log('⚠️ Error al salir: ' + e.message);
+                    }
+                }, 500);
             } catch (e) {
                 log('⚠️ Error terminando llamada nativa: ' + e.message);
             }
@@ -915,11 +925,34 @@ async function initApp() {
         log('❌ Rechazada');
     };
 
+    window.solicitarOptimizaciónBateria = async function() {
+        if (window.Capacitor) {
+            try {
+                log('🔋 Solicitando desactivar optimización de batería...');
+                await CallPlugin.requestBatteryOptimization();
+            } catch (e) {
+                log('⚠️ Error batería: ' + e.message);
+            }
+        } else {
+            log('ℹ️ Optimización de batería solo disponible en Android');
+        }
+    };
+
     window.finalizarLlamada = async function(disconnect = true) {
         if (window.Capacitor) {
             try {
+                await releaseWakeLock();
                 await CallPlugin.endCall();
                 log('📞 Llamada nativa terminada');
+                // Si la pantalla estaba bloqueada, salir de la app
+                if (document.visibilityState !== 'visible') {
+                    setTimeout(async () => {
+                        try {
+                            await CallPlugin.exitApp();
+                            log('🚪 App enviada al fondo');
+                        } catch (e) {}
+                    }, 500);
+                }
             } catch (e) {
                 log('⚠️ Error terminando llamada nativa: ' + e.message);
             }
