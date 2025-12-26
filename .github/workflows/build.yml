@@ -24,6 +24,9 @@ jobs:
         distribution: 'temurin'
         java-version: '21'
     
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+    
     - name: Install Dependencies
       run: npm install
 
@@ -438,19 +441,36 @@ jobs:
         cd android
         ./gradlew assembleRelease --no-daemon
     
-    # ===== NUEVA ACCIÓN DE FIRMA =====
-    - name: Sign Android Release
-      uses: ilharp/sign-android-release@v1
-      id: sign_app
-      with:
-        releaseDir: android/app/build/outputs/apk/release
-        signingKey: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        keyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
-        keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    - name: Decode Keystore
+      run: |
+        echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/release.keystore
+
+    - name: Sign APK with apksigner
+      run: |
+        BUILD_TOOLS="${ANDROID_SDK_ROOT}/build-tools/34.0.0"
+        APK_DIR="android/app/build/outputs/apk/release"
+        
+        # Align APK
+        ${BUILD_TOOLS}/zipalign -v -p 4 \
+          ${APK_DIR}/app-release-unsigned.apk \
+          ${APK_DIR}/app-release-aligned.apk
+        
+        # Sign APK
+        ${BUILD_TOOLS}/apksigner sign \
+          --ks android/app/release.keystore \
+          --ks-key-alias ${{ secrets.ANDROID_KEY_ALIAS }} \
+          --ks-pass pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
+          --key-pass pass:${{ secrets.ANDROID_KEY_PASSWORD }} \
+          --out ${APK_DIR}/app-release-signed.apk \
+          ${APK_DIR}/app-release-aligned.apk
+        
+        # Verify signature
+        ${BUILD_TOOLS}/apksigner verify ${APK_DIR}/app-release-signed.apk
+        
+        echo "✅ APK firmado exitosamente"
 
     - name: Upload Signed APK
       uses: actions/upload-artifact@v4
       with:
         name: MiPuerta-Release-Signed
-        path: ${{ steps.sign_app.outputs.signedFile }}
+        path: android/app/build/outputs/apk/release/app-release-signed.apk
