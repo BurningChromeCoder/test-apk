@@ -126,8 +126,20 @@ if (document.readyState === 'loading') {
                 log('❌ Error Crítico FCM: ' + errorStr);
                 if (errorStr.includes('FIS_AUTH_ERROR')) {
                     log('💡 ERROR DE AUTENTICACIÓN: Revisa la API Key en Firebase Console y habilita "Firebase Installations API"');
+                    log('🔍 Verifica que el SHA-1 de la app esté registrado en Firebase Console.');
                 }
             });
+
+            // Función global para reintentar registro manualmente
+            window.reintentarRegistroFCM = async () => {
+                log('🔄 Reintentando registro FCM manualmente...');
+                try {
+                    await PushNotifications.register();
+                    log('📡 Solicitud de registro enviada');
+                } catch (e) {
+                    log('❌ Error al solicitar registro: ' + e.message);
+                }
+            };
 
             PushNotifications.addListener('pushNotificationReceived', (notification) => {
                 log('📬 Notificación FCM recibida (foreground): ' + JSON.stringify(notification));
