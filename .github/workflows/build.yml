@@ -432,11 +432,16 @@ jobs:
     
     - name: Grant execute permission
       run: chmod +x android/gradlew
+    - name: Generate Default Debug Keystore
+      run: |
+        mkdir -p /home/runner/.config/.android
+        keytool -genkey -v -keystore /home/runner/.config/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+
     - name: Get SHA-1 Key
       run: |
         cd android
         ./gradlew signingReport
-        
+
     - name: Build APK
       run: |
         cd android
