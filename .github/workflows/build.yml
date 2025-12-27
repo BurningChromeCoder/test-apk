@@ -465,7 +465,7 @@ jobs:
           ${APK_DIR}/app-release-aligned.apk
         
         # Verify signature
-        ${BUILD_TOOLS}/apksigner verify ${APK_DIR}/app-release-signed.apk
+        ${BUILD_TOOLS}/apksigner verify --print-certs ${APK_DIR}/app-release-signed.apk
         
         echo "✅ APK firmado exitosamente"
 
