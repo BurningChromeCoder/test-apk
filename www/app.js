@@ -35,7 +35,7 @@ async function initFirebaseImmediate() {
                     projectId: "puerta-c3a71",
                     storageBucket: "puerta-c3a71.firebasestorage.app",
                     messagingSenderId: "830550601352",
-                    appId: "1:830550601352:web:f7125f76a1256aeb4db93d"
+                    appId: "1:830550601352:android:11418db7ac30773d4db93d"
                 };
                 console.log('Firebase Config:', config.projectId);
                 firebase.initializeApp(config);

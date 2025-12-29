@@ -6,6 +6,6 @@ android/app/google-services.json
 node_modules/
 
 # Build outputs
-www/
+# www/ (Solo ignorar si es el directorio de salida de build, pero aquí parece ser fuente)
 dist/
 android/app/build/
