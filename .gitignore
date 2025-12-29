@@ -1,0 +1,11 @@
+# Firebase configuration files
+google-services.json
+android/app/google-services.json
+
+# Node modules
+node_modules/
+
+# Build outputs
+www/
+dist/
+android/app/build/
