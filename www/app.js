@@ -96,23 +96,24 @@ if (document.readyState === 'loading') {
             PushNotifications.addListener('registration', async (token) => {
                 log('🔑 Token FCM recibido: ' + token.value.substring(0, 20) + '...');
                 try {
-                    // 1. Guardar en Firestore
-                    await db.collection('receptores').doc(MY_ID).set({
-                        fcmToken: token.value,
-                        lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
-                        platform: 'android',
-                        appVersion: '12.0'
-                    }, { merge: true });
-                    log('✅ Token FCM guardado en Firestore');
+                    // 1. Guardar en Firestore (Lógica original, se mantiene como respaldo)
+                    // await db.collection('receptores').doc(MY_ID).set({
+                    //     fcmToken: token.value,
+                    //     lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
+                    //     platform: 'android',
+                    //     appVersion: '12.0'
+                    // }, { merge: true });
+                    // log('✅ Token FCM guardado en Firestore (Respaldo)');
 
                     // 2. Registrar en el servidor de notificaciones (Cloud Function)
+                    // Esta llamada es CRÍTICA para registrar el token en el servidor
                     const response = await fetch(API_URL_REGISTRO, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ token: token.value, sala: 'puerta-admin-v2' })
                     });
                     if (response.ok) {
-                        log('✅ Registro en servidor exitoso');
+                        log('✅ Registro en servidor exitoso (Cloud Function)');
                     } else {
                         log('⚠️ Error servidor registro: ' + response.status);
                     }
