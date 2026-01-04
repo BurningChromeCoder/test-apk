@@ -1,0 +1,3 @@
+## 2024-05-23 - Accessibility for Video Door Controls
+**Learning:** In video door systems, icon-only buttons (like Phone, Hangup, Mute) are standard but completely inaccessible to screen readers without explicit labels. Users relying on assistive tech might not know which "phone" icon answers or rejects a call without `aria-label`.
+**Action:** Always add `aria-label` and `title` to call control buttons. For custom interactive elements (like battery optimization divs), ensure they have `role="button"`, `tabindex="0"`, and keyboard handlers.
