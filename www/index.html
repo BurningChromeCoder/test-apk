@@ -191,7 +191,7 @@
         </label>
     </div>    
     <div id="network-badge"><div id="net-dot" class="dot offline"></div><span id="net-text">Desconectado</span></div>
-    <div id="battery-opt-wrapper" onclick="window.solicitarOptimizaciónBateria()">
+    <div id="battery-opt-wrapper" role="button" tabindex="0" aria-label="Solicitar optimización de batería" onclick="window.solicitarOptimizaciónBateria()" onkeydown="if(event.key==='Enter'||event.key===' ')window.solicitarOptimizaciónBateria()">
         <span>🔋 Optimización: OFF</span>
     </div>
 
@@ -203,15 +203,15 @@
         </div>
 
         <div id="controls-incoming" class="controls-layer hidden">
-            <button class="btn btn-hangup" onclick="rechazarLlamada()">❌</button>
-            <button class="btn btn-answer" onclick="contestarLlamada()">📞</button>
+            <button class="btn btn-hangup" onclick="rechazarLlamada()" aria-label="Rechazar llamada">❌</button>
+            <button class="btn btn-answer" onclick="contestarLlamada()" aria-label="Contestar llamada">📞</button>
         </div>
 
         <div id="controls-active" class="controls-layer hidden">
-            <button class="btn btn-hangup" onclick="finalizarLlamada()">🔴</button>
+            <button class="btn btn-hangup" onclick="finalizarLlamada()" aria-label="Finalizar llamada">🔴</button>
         </div>
         
-        <button id="btn-mute" class="btn btn-mute hidden" onclick="toggleMute()">🎤</button>
+        <button id="btn-mute" class="btn btn-mute hidden" onclick="toggleMute()" aria-label="Silenciar micrófono">🎤</button>
     </div>
 
     <audio id="remoteAudio" autoplay playsinline preload="auto"></audio>
