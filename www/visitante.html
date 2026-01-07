@@ -15,12 +15,12 @@
 </head>
 <body>
     <div id="pantalla1">
-        <div class="timbre-btn" onclick="tocarTimbre()">🔔</div>
+        <button class="timbre-btn" onclick="tocarTimbre()" aria-label="Tocar timbre">🔔</button>
         <p>Toque para llamar</p>
     </div>
 
     <div id="pantalla2" class="hidden">
-        <div class="timbre-btn" style="background:#f39c12; border-color:#d35400; animation: pulse 1s infinite;">🔊</div>
+        <div class="timbre-btn" style="background:#f39c12; border-color:#d35400; animation: pulse 1s infinite;" role="status" aria-label="Llamando">🔊</div>
         <p>Llamando... Espere por favor.</p>
     </div>
 
