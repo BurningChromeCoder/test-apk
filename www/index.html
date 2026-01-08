@@ -129,6 +129,8 @@
             font-size: 11px;
             cursor: pointer;
             animation: pulse-battery 2s infinite;
+            color: white;
+            font-family: inherit;
         }
         @keyframes pulse-battery { 0% { opacity: 0.8; } 50% { opacity: 1; transform: scale(1.05); } 100% { opacity: 0.8; } }
         .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
@@ -176,7 +178,7 @@
     
     <div id="ringtone-selector">
         <span>🎵 Tono:</span>
-        <select id="ringtone-type" onchange="window.cambiarRingtone(this.value)">
+        <select id="ringtone-type" aria-label="Seleccionar tono de llamada" onchange="window.cambiarRingtone(this.value)">
             <option value="TYPE_RINGTONE">Llamada (Clásico)</option>
             <option value="TYPE_ALARM">Alarma (Fuerte)</option>
             <option value="TYPE_NOTIFICATION">Notificación (Corto)</option>
@@ -191,9 +193,9 @@
         </label>
     </div>    
     <div id="network-badge"><div id="net-dot" class="dot offline"></div><span id="net-text">Desconectado</span></div>
-    <div id="battery-opt-wrapper" onclick="window.solicitarOptimizaciónBateria()">
+    <button type="button" id="battery-opt-wrapper" onclick="window.solicitarOptimizaciónBateria()" aria-label="Solicitar optimización de batería">
         <span>🔋 Optimización: OFF</span>
-    </div>
+    </button>
 
     <div id="main-wrapper">
         <canvas id="wave-visualizer"></canvas>
@@ -203,15 +205,15 @@
         </div>
 
         <div id="controls-incoming" class="controls-layer hidden">
-            <button class="btn btn-hangup" onclick="rechazarLlamada()">❌</button>
-            <button class="btn btn-answer" onclick="contestarLlamada()">📞</button>
+            <button class="btn btn-hangup" onclick="rechazarLlamada()" aria-label="Rechazar llamada">❌</button>
+            <button class="btn btn-answer" onclick="contestarLlamada()" aria-label="Contestar llamada">📞</button>
         </div>
 
         <div id="controls-active" class="controls-layer hidden">
-            <button class="btn btn-hangup" onclick="finalizarLlamada()">🔴</button>
+            <button class="btn btn-hangup" onclick="finalizarLlamada()" aria-label="Finalizar llamada">🔴</button>
         </div>
         
-        <button id="btn-mute" class="btn btn-mute hidden" onclick="toggleMute()">🎤</button>
+        <button id="btn-mute" class="btn btn-mute hidden" onclick="toggleMute()" aria-label="Silenciar micrófono">🎤</button>
     </div>
 
     <audio id="remoteAudio" autoplay playsinline preload="auto"></audio>
